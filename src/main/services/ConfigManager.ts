@@ -38,6 +38,13 @@ export class ConfigManager implements IConfigManager {
   }
 
   /**
+   * 清除内存中的配置缓存，下次 loadConfig 会从磁盘重新读取
+   */
+  clearCache(): void {
+    this.currentConfig = null;
+  }
+
+  /**
    * 加载配置文件
    * 如果文件不存在或损坏，返回默认配置
    */
@@ -447,8 +454,8 @@ export class ConfigManager implements IConfigManager {
       proxyMode: 'global',
       proxyModeType: 'systemProxy', // 默认使用系统代理模式，不需要管理员权限
       tunConfig: {
-        mtu: 9000,
-        stack: 'system',
+        mtu: process.platform === 'darwin' ? 1400 : 9000,
+        stack: process.platform === 'darwin' ? 'gvisor' : 'system',
         autoRoute: true,
         strictRoute: true,
       },

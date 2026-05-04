@@ -32,6 +32,7 @@ import { CoreUpdateService } from './services/CoreUpdateService';
 import { SpeedTestService } from './services/SpeedTestService';
 import { ipcEventEmitter } from './ipc/ipc-events';
 import { mainEventEmitter, MAIN_EVENTS } from './ipc/main-events';
+import { ipcHandlerRegistry } from './ipc/ipc-handler';
 import { initUserDataPath } from './utils/paths';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 
@@ -139,6 +140,9 @@ process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
  * 如果窗口不存在则创建，如果已存在则显示并聚焦
  */
 async function showWindow() {
+  // 从轻量模式恢复
+  exitLightweightMode();
+
   if (process.platform === 'darwin' && app.dock) {
     await app.dock.show();
   }
@@ -150,7 +154,74 @@ async function showWindow() {
     mainWindow.focus();
   } else {
     await createWindow();
+    // 窗口重建后重新注册 IPC handlers
+    reregisterIpcHandlers();
   }
+}
+
+/**
+ * 进入轻量模式时清理主进程资源
+ */
+function enterLightweightCleanup(): void {
+  // 注销所有 IPC handlers（窗口已销毁，无渲染进程消费）
+  ipcHandlerRegistry.unregisterAll();
+
+  // 注销直接注册的 IPC handler
+  const { ipcMain } = require('electron');
+  ipcMain.removeHandler(IPC_CHANNELS.APP_SET_LANGUAGE);
+
+  // 清理 ConfigManager 缓存
+  configManager.clearCache();
+
+  // 清理 UpdateService 窗口引用
+  updateService.setMainWindow(null);
+
+  // 日志管理器进入轻量模式（缩小缓冲区 + 提升日志级别）
+  logManager.enterLightweightMode();
+
+  // 延迟触发 GC
+  setTimeout(() => {
+    if (typeof (global as any).gc === 'function') {
+      (global as any).gc();
+    }
+  }, 1000);
+}
+
+/**
+ * 退出轻量模式，恢复服务状态
+ */
+function exitLightweightMode(): void {
+  logManager.exitLightweightMode();
+}
+
+/**
+ * 窗口重建后重新注册 IPC handlers
+ */
+function reregisterIpcHandlers(): void {
+  registerConfigHandlers(configManager);
+  registerServerHandlers(protocolParser, configManager);
+  registerLogHandlers(logManager, proxyManager!);
+  registerProxyHandlers(proxyManager!, systemProxyManager);
+  registerVersionHandlers(coreUpdateService);
+  registerAdminHandlers();
+  registerRulesHandlers(configManager);
+  registerCoreUpdateHandlers();
+  registerAutoStartHandlers();
+  registerSubscriptionHandlers(subscriptionService, configManager);
+  registerBackupHandlers(configManager);
+  registerSpeedTestHandlers(configManager, speedTestService);
+  registerUpdateHandlers();
+
+  // 重新设置 UpdateService 窗口引用
+  updateService.setMainWindow(mainWindow);
+
+  // 重新注册语言同步
+  const { ipcMain } = require('electron');
+  ipcMain.handle(IPC_CHANNELS.APP_SET_LANGUAGE, (_: any, lang: string) => {
+    if (trayManager) {
+      trayManager.setLanguage(lang);
+    }
+  });
 }
 
 async function createWindow() {
@@ -357,6 +428,7 @@ async function createWindow() {
             if (process.platform === 'darwin' && app.dock) {
               app.dock.hide();
             }
+            enterLightweightCleanup();
           }
           inactivityTimer = null;
         }, INACTIVITY_TIMEOUT);

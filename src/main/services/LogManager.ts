@@ -22,6 +22,7 @@ export interface ILogManager {
 export class LogManager extends EventEmitter implements ILogManager {
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
+  private defaultMaxLogs = 1000;
   private logFilePath: string;
   private currentLogLevel: LogLevel = 'info';
   private logLevelPriority: Record<LogLevel, number> = {
@@ -143,6 +144,23 @@ export class LogManager extends EventEmitter implements ILogManager {
     this.clearLogFiles().catch((error) => {
       console.error('Failed to clear log files:', error);
     });
+  }
+
+  /**
+   * 进入轻量模式：缩小内存日志缓冲区，提升日志级别
+   */
+  enterLightweightMode(): void {
+    this.logs = [];
+    this.maxLogs = 50;
+    this.currentLogLevel = 'warn';
+  }
+
+  /**
+   * 退出轻量模式：恢复默认日志配置
+   */
+  exitLightweightMode(): void {
+    this.maxLogs = this.defaultMaxLogs;
+    this.currentLogLevel = 'info';
   }
 
   /**

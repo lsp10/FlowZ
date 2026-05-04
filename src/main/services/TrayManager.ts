@@ -482,6 +482,7 @@ export class TrayManager implements ITrayManager {
 
       // 销毁窗口，释放整个 Chromium 渲染进程（最大内存释放）
       this.mainWindow.destroy();
+      this.mainWindow = null;
       this.logManager.addLog('info', 'Main window destroyed for lightweight mode', 'TrayManager');
 
       // macOS: 隐藏 Dock 图标，仅保留托盘
@@ -489,15 +490,14 @@ export class TrayManager implements ITrayManager {
         app.dock.hide();
       }
 
-      // 窗口销毁后执行主进程内存清理：
-      // 1. 清空日志缓冲区（释放 5-10MB 内存中积累的日志对象）
-      // 2. 触发 V8 GC（回收孤立的闭包、IPC handler 引用、缓存 config 对象等，约 15-25MB）
-      // 延迟 500ms 等待窗口销毁事件完全传播
-      setTimeout(() => {
-        // 清空内存日志缓冲区（只清内存，不删磁盘日志文件）
-        this.logManager.clearLogs();
+      // 释放 TrayManager 自身缓存
+      this.servers = [];
+      this.speedTestResults.clear();
 
-        // 手动触发 V8 GC（需要启动时已调用 v8.setFlagsFromString('--expose-gc')）
+      // 延迟清理主进程内存
+      setTimeout(() => {
+        this.logManager.enterLightweightMode();
+
         if (typeof (global as any).gc === 'function') {
           (global as any).gc();
           console.log('[LightweightMode] V8 GC triggered');
