@@ -105,5 +105,16 @@ export function registerProxyHandlers(
     }
   );
 
+  // 获取当前路由规则
+  registerIpcHandler<void, any[]>(
+    IPC_CHANNELS.PROXY_GET_ROUTE_RULES,
+    async (_event: IpcMainInvokeEvent) => {
+      const config = proxyManager.getCurrentConfig();
+      if (!config) return [];
+      const singboxConfig = await proxyManager.generateSingBoxConfig(config);
+      return singboxConfig.route?.rules || [];
+    }
+  );
+
   console.log('[Proxy Handlers] Registered all proxy IPC handlers');
 }

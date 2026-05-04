@@ -51,6 +51,10 @@ export const proxyApi = {
     return ipcClient.invoke(IPC_CHANNELS.PROXY_GET_STATUS);
   },
 
+  async getRouteRules(): Promise<any[]> {
+    return ipcClient.invoke(IPC_CHANNELS.PROXY_GET_ROUTE_RULES);
+  },
+
   /**
    * 监听代理启动事件
    */

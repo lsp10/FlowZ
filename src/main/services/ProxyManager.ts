@@ -304,6 +304,7 @@ export interface IProxyManager {
   restart(config: UserConfig): Promise<void>;
   getStatus(): ProxyStatus;
   generateSingBoxConfig(config: UserConfig): Promise<SingBoxConfig>;
+  getCurrentConfig(): UserConfig | null;
   on(event: 'started' | 'stopped' | 'error', listener: (...args: any[]) => void): void;
   off(event: 'started' | 'stopped' | 'error', listener: (...args: any[]) => void): void;
   getCoreVersion(): Promise<string>;
@@ -598,6 +599,10 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         (s) => s.id === this.currentConfig?.selectedServerId
       ),
     };
+  }
+
+  getCurrentConfig(): UserConfig | null {
+    return this.currentConfig;
   }
 
   /**

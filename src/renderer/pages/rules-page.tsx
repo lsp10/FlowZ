@@ -18,6 +18,7 @@ import { DeleteRuleDialog } from '@/components/rules/delete-rule-dialog';
 import type { DomainRule } from '@/bridge/types';
 import { useTranslation } from 'react-i18next';
 import { BypassProcessSettings } from '@/components/settings/bypass-process-settings';
+import { RouteRulesCard } from '@/components/rules/route-rules-card';
 
 export function RulesPage() {
   const { t } = useTranslation();
@@ -192,6 +193,9 @@ export function RulesPage() {
           <p dangerouslySetInnerHTML={{ __html: t('rules.instruction6') }} />
         </CardContent>
       </Card>
+
+      {/* Route Rules Overview */}
+      <RouteRulesCard />
 
       {/* Bypass Process Settings */}
       <BypassProcessSettings />

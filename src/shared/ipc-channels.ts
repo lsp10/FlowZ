@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   PROXY_STOP: 'proxy:stop',
   PROXY_GET_STATUS: 'proxy:getStatus',
   PROXY_RESTART: 'proxy:restart',
+  PROXY_GET_ROUTE_RULES: 'proxy:getRouteRules',
 
   // 配置管理
   CONFIG_GET: 'config:get',
