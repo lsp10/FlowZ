@@ -363,6 +363,7 @@ export interface LogEntry {
   message: string;
   source: string;
   stack?: string;
+  category?: 'route' | 'system';
 }
 
 // ============================================================================

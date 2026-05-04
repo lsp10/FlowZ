@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { useAppStore } from '@/store/app-store';
-import { Trash2, ArrowDown, Search } from 'lucide-react';
+import { Trash2, ArrowDown, Search, Route } from 'lucide-react';
 import { getLogs, clearLogs, addEventListener, removeEventListener } from '@/bridge/api-wrapper';
 import type { LogEntry } from '@/bridge/types';
 import { useTranslation } from 'react-i18next';
@@ -138,7 +138,8 @@ export function RealTimeLogs() {
   const filteredLogs = logs.filter(
     (log) =>
       log.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.level.toLowerCase().includes(searchTerm.toLowerCase())
+      log.level.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (log.category === 'route' && 'route'.includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -182,14 +183,27 @@ export function RealTimeLogs() {
             <div className="space-y-1 select-text cursor-text">
               {filteredLogs.map((log, index) => {
                 const timestamp = new Date(log.timestamp).toLocaleTimeString('zh-CN');
+                const isRoute = log.category === 'route';
 
                 return (
-                  <div key={index} className="text-xs font-mono select-text">
-                    <span className="text-muted-foreground">[{timestamp}]</span>
-                    <span className={`ml-2 font-semibold ${getLevelColor(log.level)}`}>
-                      {log.level.toUpperCase()}:
+                  <div
+                    key={index}
+                    className={`text-xs font-mono select-text flex items-start gap-1 ${
+                      isRoute
+                        ? 'border-l-2 border-emerald-500/70 pl-2 bg-emerald-500/5 rounded-r-sm py-0.5'
+                        : ''
+                    }`}
+                  >
+                    {isRoute && <Route className="h-3 w-3 mt-0.5 shrink-0 text-emerald-500" />}
+                    <span>
+                      <span className="text-muted-foreground">[{timestamp}]</span>
+                      <span
+                        className={`ml-2 font-semibold ${isRoute ? 'text-emerald-500' : getLevelColor(log.level)}`}
+                      >
+                        {isRoute ? 'ROUTE' : log.level.toUpperCase()}:
+                      </span>
+                      <span className="ml-2">{log.message}</span>
                     </span>
-                    <span className="ml-2">{log.message}</span>
                   </div>
                 );
               })}

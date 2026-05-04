@@ -10,7 +10,13 @@ import type { LogEntry, LogLevel } from '../../shared/types';
 import { getLogsPath } from '../utils/paths';
 
 export interface ILogManager {
-  addLog(level: LogLevel, message: string, source: string, stack?: string): void;
+  addLog(
+    level: LogLevel,
+    message: string,
+    source: string,
+    stack?: string,
+    category?: LogEntry['category']
+  ): void;
   getLogs(limit?: number): LogEntry[];
   clearLogs(): void;
   setLogLevel(level: LogLevel): void;
@@ -82,7 +88,13 @@ export class LogManager extends EventEmitter implements ILogManager {
   /**
    * 添加日志条目
    */
-  addLog(level: LogLevel, message: string, source: string, stack?: string): void {
+  addLog(
+    level: LogLevel,
+    message: string,
+    source: string,
+    stack?: string,
+    category?: LogEntry['category']
+  ): void {
     // 检查日志级别过滤
     if (!this.shouldLog(level)) {
       return;
@@ -94,6 +106,7 @@ export class LogManager extends EventEmitter implements ILogManager {
       message,
       source,
       stack,
+      ...(category && { category }),
     };
 
     // 添加到内存日志

@@ -3508,6 +3508,20 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     return text.replace(/\x1b\[[0-9;]*m/g, '');
   }
 
+  private static ROUTE_LOG_PATTERNS = [
+    'match rule',
+    'final rule',
+    'rule-set',
+    'outbound/proxy',
+    'outbound/direct',
+    'outbound/',
+  ];
+
+  private isRouteLog(message: string): boolean {
+    const lower = message.toLowerCase();
+    return ProxyManager.ROUTE_LOG_PATTERNS.some((p) => lower.includes(p));
+  }
+
   /**
    * 解析并记录日志行
    */
@@ -3534,12 +3548,14 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
       // 空消息不记录（如私有 IP 超时）
       if (friendlyMessage) {
-        this.logToManager(logInfo.level, friendlyMessage);
+        const category = this.isRouteLog(friendlyMessage) ? ('route' as const) : undefined;
+        this.logToManager(logInfo.level, friendlyMessage, category);
       }
     } else {
       // 无法解析的日志，尝试对原始行也进行标签转换
       const resolvedLine = this.resolveTagsToNames(line);
-      this.logToManager('info', resolvedLine);
+      const category = this.isRouteLog(resolvedLine) ? ('route' as const) : undefined;
+      this.logToManager('info', resolvedLine, category);
     }
   }
 
@@ -3816,10 +3832,11 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
    */
   private logToManager(
     level: 'debug' | 'info' | 'warn' | 'error' | 'fatal',
-    message: string
+    message: string,
+    category?: 'route' | 'system'
   ): void {
     if (this.logManager) {
-      this.logManager.addLog(level, message, 'sing-box');
+      this.logManager.addLog(level, message, 'sing-box', undefined, category);
     }
   }
 
