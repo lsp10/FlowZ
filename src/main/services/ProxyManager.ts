@@ -380,12 +380,12 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     // 先保存当前配置（needsRootPrivilege 等方法需要用到）
     this.currentConfig = config;
 
-    // 仅在 TUN 模式下清理可能残留的 sing-box 进程
-    // 系统代理模式不需要管理员权限，也不会有残留的 TUN 进程问题
-    const isTunMode = config.proxyModeType === 'tun';
-    if (isTunMode) {
-      await this.killOrphanedSingBoxProcesses();
-    }
+    // 清理可能残留的 sing-box 进程（例如从 TUN 模式切换到系统代理模式时，
+    // 旧的 root sing-box 进程可能仍占用端口）
+    await this.killOrphanedSingBoxProcesses();
+
+    // 等待端口释放（残留进程被杀后 OS 需要时间回收端口）
+    await this.waitForPortRelease(9090, 8000);
 
     // 0. 获取核心版本（用于后续生成兼容的配置文件）
     this.coreVersion = await this.getCoreVersion();
@@ -482,7 +482,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
    */
   async restart(config: UserConfig): Promise<void> {
     await this.stop();
-    await this.waitForPortRelease(9090);
+    await this.waitForPortRelease(9090, 8000);
     await this.start(config);
   }
 
@@ -3078,25 +3078,17 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   }
 
   private async waitForPortRelease(port: number, timeout = 5000): Promise<void> {
-    const { execSync } = require('child_process');
+    const net = require('net');
     const start = Date.now();
     while (Date.now() - start < timeout) {
-      try {
-        if (process.platform === 'win32') {
-          const result = execSync(`netstat -ano | findstr ":${port} "`, {
-            encoding: 'utf-8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-          });
-          if (!result.includes('LISTENING')) return;
-        } else {
-          execSync(`lsof -i :${port} -sTCP:LISTEN`, {
-            encoding: 'utf-8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-          });
-        }
-      } catch {
-        return;
-      }
+      const inUse = await new Promise<boolean>((resolve) => {
+        const srv = net.createServer();
+        srv.once('error', () => resolve(true));
+        srv.listen(port, '127.0.0.1', () => {
+          srv.close(() => resolve(false));
+        });
+      });
+      if (!inUse) return;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     this.logToManager('warn', `端口 ${port} 在 ${timeout}ms 内未释放`);
