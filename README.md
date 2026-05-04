@@ -127,6 +127,118 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 
 ---
 
+## 📱 应用分流详解
+
+应用分流可以为特定应用（如 YouTube、Telegram、币安等）单独指定流量走向，不受全局代理模式的影响。
+
+### 基本概念
+
+应用分流由两层结构组成：
+
+1. **应用预设** — 定义"这个应用是什么"，包含域名规则、IP 规则、进程名等匹配条件
+2. **应用规则** — 定义"这个应用的流量怎么走"，即代理 / 直连 / 屏蔽
+
+系统内置了 YouTube、Netflix、TikTok、Telegram、Twitter、OpenAI、Claude、Steam 等常用应用预设。如果需要的应用不在预设列表中，可以通过自定义预设添加。
+
+### 预设字段说明
+
+| 字段 | 含义 |
+|---|---|
+| `geositeTags` | sing-box geosite 规则集标签，按域名匹配流量。如 `["youtube"]` 会匹配所有 YouTube 相关域名（youtube.com、googlevideo.com 等）。**TUN 和系统代理模式都生效** |
+| `geoipTags` | sing-box geoip 规则集标签，按目标 IP 段匹配流量。如 `["twitter"]` 包含 Twitter 的 IP 段。**TUN 和系统代理模式都生效** |
+| `processNames` | 进程名列表，按操作系统进程名匹配。如 `["Telegram", "Telegram.exe"]`。**仅 TUN 模式生效**，系统代理模式下 sing-box 无法获取进程信息 |
+
+### 三个字段如何协同工作
+
+每个启用的应用规则会生成 **两条独立的 sing-box 路由规则**：
+
+```
+规则 1: { process_name: [...], outbound: "xxx" }   ← 由 processNames 生成
+规则 2: { rule_set: ["geosite-xxx", "geoip-xxx"], outbound: "xxx" }  ← 由 geositeTags + geoipTags 生成
+```
+
+- **进程名规则排在域名/IP 规则之前**，优先级更高
+- sing-box 路由采用 **first-match** 机制（第一条匹配即生效，后续不再检查）
+- 两条规则指向同一个出口，是**互补关系**而非竞争关系
+
+**实际效果**：TUN 模式下，进程名规则先命中，覆盖面更广（进程的所有流量，包括非标准域名）；如果进程名没命中（系统代理模式，或进程名不在列表中），域名/IP 规则兜底。
+
+### 规则优先级（从高到低）
+
+```
+1. 自定义规则（用户手动添加的域名/IP 规则）
+2. 应用分流 - 进程名规则（processNames）
+3. 应用分流 - 域名/IP 规则（geositeTags + geoipTags）
+4. QUIC 阻断（UDP 443 reject）
+5. 智能分流 / 全局分流的兜底规则
+```
+
+自定义规则优先级最高，可以用来覆盖应用分流的行为。例如：应用分流将 Binance 设为代理，但你可以添加一条自定义规则将 `binance.com` 强制直连。
+
+### 规则字段说明
+
+| 字段 | 含义 |
+|---|---|
+| `action` | 流量策略：`proxy`（走代理）/ `direct`（直连）/ `block`（屏蔽） |
+| `enabled` | 是否启用这条规则 |
+| `targetServerId` | 指定代理服务器（仅 action 为 proxy 时有效），不填则走默认选中的服务器 |
+
+### 示例：添加币安 (Binance) 应用分流
+
+币安不在系统预设中，需要通过自定义预设添加。
+
+**1. 添加自定义应用预设**
+
+在设置中添加自定义应用预设，填写以下信息：
+
+| 字段 | 值 | 说明 |
+|---|---|---|
+| 名称 | `Binance 币安` | 显示名称 |
+| Emoji | `💰` | 备用图标 |
+| geositeTags | `["binance"]` | 对应 `geosite-binance` 规则集，匹配 `binance.com`、`binance.cloud`、`bnbstatic.com` 等域名 |
+| geoipTags | `[]` | 币安没有专属 IP 段，留空即可 |
+
+对应的 JSON 配置：
+
+```json
+{
+  "id": "binance",
+  "name": "Binance 币安",
+  "emoji": "💰",
+  "geositeTags": ["binance"],
+  "geoipTags": []
+}
+```
+
+**2. 添加应用规则**
+
+创建规则，将币安流量走代理：
+
+```json
+{
+  "appId": "binance",
+  "action": "proxy",
+  "enabled": true
+}
+```
+
+如需指定特定服务器：
+
+```json
+{
+  "appId": "binance",
+  "action": "proxy",
+  "enabled": true,
+  "targetServerId": "你的服务器ID"
+}
+```
+
+如需直连或屏蔽，将 `action` 改为 `"direct"` 或 `"block"` 即可。
+
+> 以上操作均可在 UI 的规则页面完成，无需手动编辑 JSON。
+
+---
+
 ## 🔧 技术栈
 
 - Electron
