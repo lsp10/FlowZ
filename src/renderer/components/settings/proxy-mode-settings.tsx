@@ -55,9 +55,7 @@ export function ProxyModeSettings() {
       };
 
       await saveConfig(updatedConfig);
-      toast.success(t('settings.proxyMode.successUpdate'), {
-        description: isConnected ? t('settings.proxyMode.reconnectToast') : undefined,
-      });
+      toast.success(t('settings.proxyMode.successUpdate'));
     } catch {
       toast.error(t('settings.proxyMode.failUpdate'));
     }

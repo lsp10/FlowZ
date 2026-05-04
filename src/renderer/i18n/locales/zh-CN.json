@@ -656,5 +656,8 @@
     "importSuccessCount": "成功导入 {{count}} 个节点",
     "importFailCount": "{{count}} 个节点导入失败",
     "noNodesToImport": "没有可导入的节点"
+  },
+  "proxy": {
+    "needsManualRestart": "代理模式已更改，请手动重启代理以应用新配置"
   }
 }

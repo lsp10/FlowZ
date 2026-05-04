@@ -108,6 +108,16 @@ function App() {
     };
   }, [setPrivacyMode]);
 
+  // Listen to manual restart prompt when proxy mode changes
+  useEffect(() => {
+    const unsubscribe = ipcClient.on('event:needsManualRestart', () => {
+      toast.warning(i18n.t('proxy.needsManualRestart'), {
+        duration: 8000,
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
   return (
     <ErrorBoundary>
       <PrivacyOverlay />

@@ -642,26 +642,10 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
   /**
    * 切换代理模式
-   * 检测模式变化，如果代理正在运行则重启
+   * 仅更新配置，不自动重启（由用户手动重启）
    */
   async switchMode(newConfig: UserConfig): Promise<void> {
-    // 检查是否有模式变化
-    const modeChanged = this.hasModeChanged(newConfig);
-
-    if (!modeChanged) {
-      // 模式没有变化，只更新配置
-      this.currentConfig = newConfig;
-      return;
-    }
-
-    // 如果代理正在运行，需要重启
-    if (this.singboxProcess) {
-      this.logToManager('info', '代理模式已更改，正在重启代理...');
-      await this.restart(newConfig);
-    } else {
-      // 代理未运行，只更新配置
-      this.currentConfig = newConfig;
-    }
+    this.currentConfig = newConfig;
   }
 
   /**
@@ -675,8 +659,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     const old = this.currentConfig;
 
     if (
-      old.proxyMode !== newConfig.proxyMode ||
-      old.proxyModeType !== newConfig.proxyModeType ||
       old.selectedServerId !== newConfig.selectedServerId ||
       old.socksPort !== newConfig.socksPort ||
       old.httpPort !== newConfig.httpPort ||
@@ -714,10 +696,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     }
 
     return false;
-  }
-
-  private hasModeChanged(newConfig: UserConfig): boolean {
-    return this.needsRestart(newConfig);
   }
 
   /**

@@ -831,17 +831,16 @@ app.whenReady().then(async () => {
         await configManager.saveConfig(config);
         logManager.addLog('info', `Proxy mode changed from tray: ${mode}`, 'Main');
 
-        // 如果代理正在运行，重启以应用新模式
-        if (proxyManager && proxyManager.getStatus().running) {
-          await proxyManager.restart(config);
-          logManager.addLog('info', 'Proxy restarted with new mode', 'Main');
-        }
-
         // 更新托盘菜单
         updateTrayMenuState(proxyManager?.getStatus().running ?? false);
 
         // 通知渲染进程配置已更新
         ipcEventEmitter.sendToAll('event:configChanged', { newValue: config });
+
+        // 如果代理正在运行，提示用户需要手动重启
+        if (proxyManager && proxyManager.getStatus().running) {
+          ipcEventEmitter.sendToAll('event:needsManualRestart', {});
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logManager.addLog('error', `Failed to change proxy mode: ${errorMessage}`, 'Main');
@@ -1167,6 +1166,8 @@ app.whenReady().then(async () => {
 
   // 监听配置变更事件，更新托盘菜单并按需重启代理（1 秒防抖）
   let restartDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastProxyMode: string | null = null;
+  let lastProxyModeType: string | null = null;
   mainEventEmitter.on(MAIN_EVENTS.CONFIG_CHANGED, () => {
     // 1. 更新托盘菜单（立即执行）
     const isRunning = proxyManager?.getStatus().running ?? false;
@@ -1179,6 +1180,20 @@ app.whenReady().then(async () => {
         restartDebounceTimer = null;
         try {
           const latestConfig = await configManager.loadConfig();
+
+          // 检测代理模式变化，提示用户手动重启
+          const modeChanged =
+            (lastProxyMode !== null && lastProxyMode !== latestConfig.proxyMode) ||
+            (lastProxyModeType !== null && lastProxyModeType !== latestConfig.proxyModeType);
+          lastProxyMode = latestConfig.proxyMode;
+          lastProxyModeType = latestConfig.proxyModeType;
+
+          if (modeChanged) {
+            ipcEventEmitter.sendToAll('event:needsManualRestart', {});
+            proxyManager!.switchMode(latestConfig);
+            return;
+          }
+
           if (!proxyManager!.needsRestart(latestConfig)) return;
 
           logManager.addLog('info', 'Configuration changed, restarting proxy...', 'Main');

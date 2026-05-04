@@ -656,5 +656,8 @@
     "importSuccessCount": "Successfully imported {{count}} node(s)",
     "importFailCount": "{{count}} node(s) failed to import",
     "noNodesToImport": "No nodes to import"
+  },
+  "proxy": {
+    "needsManualRestart": "Proxy mode changed. Please restart the proxy manually to apply the new configuration."
   }
 }
