@@ -131,6 +131,7 @@ interface SingBoxDnsConfig {
   final?: string;
   strategy?: string;
   fakeip?: SingBoxFakeIPConfig;
+  independent_cache?: boolean;
 }
 
 interface SingBoxInbound {
@@ -993,7 +994,19 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       final: 'dns-domestic',
       // macOS 使用 RealIP 模式（嗅探），Windows 依然使用高效的 FakeIP
       strategy: process.platform === 'darwin' || config.enableIPv6 ? 'prefer_ipv4' : 'ipv4_only',
+      // FakeIP 需要独立缓存，防止 fakeip 和真实 DNS 的缓存互相污染
+      ...(enableFakeIp ? { independent_cache: true } : {}),
     };
+
+    // sing-box 1.12.x 需要 dns.fakeip 顶层配置来初始化 FakeIP 存储
+    // 仅有 type: 'fakeip' 的 DNS server 定义不够，必须同时声明 dns.fakeip.enabled = true
+    if (enableFakeIp) {
+      dnsConfig.fakeip = {
+        enabled: true,
+        inet4_range: '198.18.0.0/15',
+        inet6_range: 'fc00::/18',
+      };
+    }
     const dnsRules: SingBoxDnsRule[] = [];
 
     // 代理服务器域名必须使用真实 DNS 解析（避免 FakeIP 劫持产生死循环）
@@ -1227,6 +1240,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       const inboundVersionNum = inboundVersionMatch ? parseFloat(inboundVersionMatch[1]) : 1.13;
       if (!isNaN(inboundVersionNum) && inboundVersionNum < 1.13) {
         (tunInbound as any).sniff = true;
+        (tunInbound as any).sniff_override_destination = true;
       }
 
       // macOS 平台特定配置
