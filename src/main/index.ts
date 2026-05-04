@@ -810,8 +810,7 @@ app.whenReady().then(async () => {
 
         // 如果代理正在运行，重启以应用新服务器
         if (proxyManager && proxyManager.getStatus().running) {
-          await proxyManager.stop();
-          await proxyManager.start(config);
+          await proxyManager.restart(config);
           logManager.addLog('info', 'Proxy restarted with new server', 'Main');
         }
 
@@ -834,8 +833,7 @@ app.whenReady().then(async () => {
 
         // 如果代理正在运行，重启以应用新模式
         if (proxyManager && proxyManager.getStatus().running) {
-          await proxyManager.stop();
-          await proxyManager.start(config);
+          await proxyManager.restart(config);
           logManager.addLog('info', 'Proxy restarted with new mode', 'Main');
         }
 
@@ -1177,10 +1175,8 @@ app.whenReady().then(async () => {
     if (isRunning && proxyManager) {
       logManager.addLog('info', 'Configuration changed, restarting proxy...', 'Main');
       try {
-        await proxyManager.stop();
-        // 重新加载配置以确保使用最新值
         const latestConfig = await configManager.loadConfig();
-        await proxyManager.start(latestConfig);
+        await proxyManager.restart(latestConfig);
         logManager.addLog('info', 'Proxy restarted successfully with new configuration', 'Main');
 
         // 重启后再次更新托盘（以防状态有变）
