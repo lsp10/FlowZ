@@ -7,6 +7,7 @@ import { BrowserWindow } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as dns from 'dns';
 import { EventEmitter } from 'events';
 import type { UserConfig, ServerConfig, ProxyStatus } from '../../shared/types';
 import type { ILogManager } from './LogManager';
@@ -302,7 +303,7 @@ export interface IProxyManager {
   stop(): Promise<void>;
   restart(config: UserConfig): Promise<void>;
   getStatus(): ProxyStatus;
-  generateSingBoxConfig(config: UserConfig): SingBoxConfig;
+  generateSingBoxConfig(config: UserConfig): Promise<SingBoxConfig>;
   on(event: 'started' | 'stopped' | 'error', listener: (...args: any[]) => void): void;
   off(event: 'started' | 'stopped' | 'error', listener: (...args: any[]) => void): void;
   getCoreVersion(): Promise<string>;
@@ -408,7 +409,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     await this.copyRuleSetsToUserData();
 
     // 4. 生成 sing-box 配置文件
-    const singboxConfig = this.generateSingBoxConfig(config);
+    const singboxConfig = await this.generateSingBoxConfig(config);
 
     // 写入配置文件
     await this.writeSingBoxConfig(singboxConfig);
@@ -481,6 +482,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
    */
   async restart(config: UserConfig): Promise<void> {
     await this.stop();
+    await this.waitForPortRelease(9090);
     await this.start(config);
   }
 
@@ -626,7 +628,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   /**
    * 生成 sing-box 配置（sing-box 1.12.x / 1.13.x 兼容格式）
    */
-  generateSingBoxConfig(config: UserConfig): SingBoxConfig {
+  async generateSingBoxConfig(config: UserConfig): Promise<SingBoxConfig> {
     const selectedServer = config.servers.find((s) => s.id === config.selectedServerId);
     if (!selectedServer) {
       throw new Error('Selected server not found');
@@ -672,7 +674,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         config,
         idToTagMap.get(config.selectedServerId as string) || 'proxy'
       ),
-      inbounds: this.generateInbounds(config),
+      inbounds: await this.generateInbounds(config),
       outbounds: this.generateOutbounds(selectedServer, config, idToTagMap),
       route: this.generateRouteConfig(config, idToTagMap),
       experimental: {
@@ -782,7 +784,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         type: 'udp',
         server: '223.5.5.5',
         server_port: 53,
-        detour: 'direct',
       },
       {
         tag: 'dns-bootstrap',
@@ -791,7 +792,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         server_port: 443,
         path: '/dns-query',
         domain_resolver: 'dns-bootstrap-udp',
-        detour: 'direct',
       },
       {
         // 兼容性和兜底的系统 DNS
@@ -819,6 +819,17 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         detour: selectedServerTag,
       },
     ];
+
+    // sing-box 1.13+ 支持 DNS server 的 detour 字段，强制 bootstrap DNS 绕过 TUN
+    // 1.12.x 会报 "detour to an empty direct outbound makes no sense"
+    const dnsVerArr = this.coreVersion.split('.');
+    const dnsVerNum = parseFloat(dnsVerArr[0] + '.' + (dnsVerArr[1] || '0'));
+    if (!isNaN(dnsVerNum) && dnsVerNum >= 1.13) {
+      const bootstrapUdp = dnsServers.find((s) => s.tag === 'dns-bootstrap-udp');
+      const bootstrapDoh = dnsServers.find((s) => s.tag === 'dns-bootstrap');
+      if (bootstrapUdp) bootstrapUdp.detour = 'direct';
+      if (bootstrapDoh) bootstrapDoh.detour = 'direct';
+    }
 
     if (enableFakeIp) {
       dnsServers.push({
@@ -938,7 +949,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   /**
    * 生成 Inbound 配置（sing-box 1.12.x / 1.13.x 兼容格式）
    */
-  private generateInbounds(config: UserConfig): SingBoxInbound[] {
+  private async generateInbounds(config: UserConfig): Promise<SingBoxInbound[]> {
     const inbounds: SingBoxInbound[] = [];
 
     // 使用小写比较，兼容 SystemProxy/systemProxy 和 Tun/tun
@@ -1028,6 +1039,16 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
             excludeAddr.push(`${server.address}/32`);
           } else if (isIpv6(server.address)) {
             excludeAddr.push(`${server.address}/128`);
+          } else {
+            // 域名服务器：解析 IP 并加入排除列表，防止 TUN 捕获 sing-box 出站流量形成环路
+            try {
+              const resolved = await dns.promises.resolve4(server.address);
+              for (const ip of resolved) {
+                excludeAddr.push(`${ip}/32`);
+              }
+            } catch {
+              this.logToManager('warn', `无法解析服务器域名 ${server.address}，TUN 可能产生回环`);
+            }
           }
         }
       }
@@ -3054,6 +3075,31 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       // 命令执行失败，进程不存在
       return false;
     }
+  }
+
+  private async waitForPortRelease(port: number, timeout = 5000): Promise<void> {
+    const { execSync } = require('child_process');
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      try {
+        if (process.platform === 'win32') {
+          const result = execSync(`netstat -ano | findstr ":${port} "`, {
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          if (!result.includes('LISTENING')) return;
+        } else {
+          execSync(`lsof -i :${port} -sTCP:LISTEN`, {
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+        }
+      } catch {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    this.logToManager('warn', `端口 ${port} 在 ${timeout}ms 内未释放`);
   }
 
   /**
