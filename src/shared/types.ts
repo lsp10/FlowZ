@@ -260,6 +260,7 @@ export interface CustomAppPreset {
   iconUrl?: string;
   geositeTags: string[];
   geoipTags?: string[];
+  processNames?: string[];
 }
 
 // ============================================================================

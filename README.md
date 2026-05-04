@@ -150,8 +150,7 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 | **名称** | `name` | 纯显示用途，在应用列表中展示的名称。**不参与任何路由匹配**，不是 `id` 也不是 `processNames`。`id` 由系统自动生成（格式 `custom-{timestamp}`） |
 | **Geosite** | `geositeTags` | 核心匹配字段，多个标签用英文逗号分隔。如填 `binance` 则匹配 `geosite-binance` 域名规则集 |
 | **GeoIP** | `geoipTags` | 可选，按目标 IP 段匹配，多个标签用英文逗号分隔 |
-
-> `processNames`（进程名匹配）目前仅系统内置预设支持，自定义预设暂不提供该输入项。自定义应用的流量匹配完全依赖 Geosite 和 GeoIP 规则集。
+| **进程名** | `processNames` | 可选，按操作系统进程名匹配，多个进程名用英文逗号分隔。如填 `Binance,Binance.exe`。**仅 TUN 模式生效** |
 
 ### 匹配字段详解
 
@@ -159,7 +158,7 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 |---|---|
 | `geositeTags` | sing-box geosite 规则集标签，按域名匹配流量。如 `["youtube"]` 会匹配所有 YouTube 相关域名（youtube.com、googlevideo.com 等）。**TUN 和系统代理模式都生效** |
 | `geoipTags` | sing-box geoip 规则集标签，按目标 IP 段匹配流量。如 `["twitter"]` 包含 Twitter 的 IP 段。**TUN 和系统代理模式都生效** |
-| `processNames` | 进程名列表，按操作系统进程名匹配。如 `["Telegram", "Telegram.exe"]`。**仅 TUN 模式生效**，系统代理模式下 sing-box 无法获取进程信息。仅内置预设可用 |
+| `processNames` | 进程名列表，按操作系统进程名匹配。如 `["Telegram", "Telegram.exe"]`。**仅 TUN 模式生效**，系统代理模式下 sing-box 无法获取进程信息 |
 
 ### 三个字段如何协同工作
 
@@ -210,6 +209,7 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 | 名称 | `Binance 币安` | 列表中的显示名称，不影响路由匹配 |
 | Geosite | `binance` | 匹配 `binance.com`、`binance.cloud`、`bnbstatic.com` 等域名 |
 | GeoIP | 留空 | 币安没有专属 IP 段 |
+| 进程名 | `Binance,Binance.exe` | 可选，TUN 模式下按进程精准匹配 |
 
 点击确认后，币安会出现在应用分流列表中。
 
@@ -231,7 +231,8 @@ macOS Intel 用户需要修改 `electron-builder.json`：
   "name": "Binance 币安",
   "emoji": "💰",
   "geositeTags": ["binance"],
-  "geoipTags": []
+  "geoipTags": [],
+  "processNames": ["Binance", "Binance.exe"]
 }
 ```
 

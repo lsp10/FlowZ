@@ -38,6 +38,7 @@ export function AppRulesCard() {
   const [newAppIconUrl, setNewAppIconUrl] = useState('');
   const [newAppGeosite, setNewAppGeosite] = useState('');
   const [newAppGeoIP, setNewAppGeoIP] = useState('');
+  const [newAppProcessNames, setNewAppProcessNames] = useState('');
 
   // -- 图标库状态 --
   const [iconGalleries, setIconGalleries] = useState<{ name: string; url: string }[]>([]);
@@ -194,6 +195,12 @@ export function AppRulesCard() {
             .map((s) => s.trim())
             .filter(Boolean)
         : undefined,
+      processNames: newAppProcessNames
+        ? newAppProcessNames
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
     };
 
     await saveConfig({
@@ -208,6 +215,7 @@ export function AppRulesCard() {
     setNewAppIconUrl('');
     setNewAppGeosite('');
     setNewAppGeoIP('');
+    setNewAppProcessNames('');
     toast.success('自定义应用添加成功');
   };
 
@@ -631,6 +639,18 @@ export function AppRulesCard() {
                     value={newAppGeoIP}
                     onChange={(e) => setNewAppGeoIP(e.target.value)}
                     placeholder="可选，如 apple"
+                    className="col-span-3 h-10 rounded-lg bg-muted/20 border-none focus-visible:ring-1"
+                  />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="processNames" className="text-right">
+                    进程名
+                  </Label>
+                  <Input
+                    id="processNames"
+                    value={newAppProcessNames}
+                    onChange={(e) => setNewAppProcessNames(e.target.value)}
+                    placeholder="可选，如 Binance,Binance.exe"
                     className="col-span-3 h-10 rounded-lg bg-muted/20 border-none focus-visible:ring-1"
                   />
                 </div>

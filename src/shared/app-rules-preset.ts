@@ -168,26 +168,36 @@ export const APP_PRESETS: AppPreset[] = [
     // 游戏通过 Steam 启动后是独立进程，仅匹配 "Steam" 无法覆盖游戏本体的 UDP 流量
     processNames: [
       // Steam 客户端及辅助进程
-      'Steam', 'steam.exe',
-      'steamwebhelper', 'steamwebhelper.exe',
-      'GameOverlayUI.exe', 'GameOverlayUI',
+      'Steam',
+      'steam.exe',
+      'steamwebhelper',
+      'steamwebhelper.exe',
+      'GameOverlayUI.exe',
+      'GameOverlayUI',
       'steam_osx', // macOS Steam binary
       // 热门 FPS / 竞技游戏
-      'cs2', 'cs2.exe',                   // CS2 (Counter-Strike 2)
-      'dota2', 'dota2.exe',               // Dota 2
-      'TslGame.exe', 'TslGame',           // PUBG
-      'r5apex.exe', 'r5apex',             // Apex Legends
-      'EscapeFromTarkov.exe',             // Escape from Tarkov
+      'cs2',
+      'cs2.exe', // CS2 (Counter-Strike 2)
+      'dota2',
+      'dota2.exe', // Dota 2
+      'TslGame.exe',
+      'TslGame', // PUBG
+      'r5apex.exe',
+      'r5apex', // Apex Legends
+      'EscapeFromTarkov.exe', // Escape from Tarkov
       'FortniteClient-Win64-Shipping.exe', // Fortnite (via Epic on Steam)
       // MOBA / RPG
-      'Hearthstone.exe', 'Hearthstone',   // 炉石传说
-      'GenshinImpact.exe', 'YuanShen.exe', // 原神
-      'StarRail.exe',                     // 崩坏：星穹铁道
-      'ZenlessZoneZero.exe',              // 绝区零
+      'Hearthstone.exe',
+      'Hearthstone', // 炉石传说
+      'GenshinImpact.exe',
+      'YuanShen.exe', // 原神
+      'StarRail.exe', // 崩坏：星穹铁道
+      'ZenlessZoneZero.exe', // 绝区零
       // 生存 / 沙盒
-      'valheim.exe', 'valheim',           // Valheim
-      'RustClient.exe',                   // Rust
-      'Palworld-Win64-Shipping.exe',      // Palworld 幻兽帕鲁
+      'valheim.exe',
+      'valheim', // Valheim
+      'RustClient.exe', // Rust
+      'Palworld-Win64-Shipping.exe', // Palworld 幻兽帕鲁
     ],
     category: 'game',
   },
@@ -199,7 +209,8 @@ export const APP_PRESETS: AppPreset[] = [
       'https://raw.githubusercontent.com/lige47/QuanX-icon-rule/main/icon/07Game/epicgames.png',
     geositeTags: ['epicgames'],
     processNames: [
-      'EpicGamesLauncher', 'EpicGamesLauncher.exe',
+      'EpicGamesLauncher',
+      'EpicGamesLauncher.exe',
       'EpicWebHelper.exe',
       'FortniteClient-Win64-Shipping.exe',
       'UnrealEngineLauncher.exe',
@@ -210,15 +221,17 @@ export const APP_PRESETS: AppPreset[] = [
     id: 'riot',
     labelKey: 'riot',
     emoji: '⚔️',
-    iconUrl:
-      'https://raw.githubusercontent.com/lige47/QuanX-icon-rule/main/icon/07Game/riot.png',
+    iconUrl: 'https://raw.githubusercontent.com/lige47/QuanX-icon-rule/main/icon/07Game/riot.png',
     geositeTags: ['riot'],
     processNames: [
-      'RiotClientServices.exe', 'RiotClientServices',
-      'LeagueClient.exe', 'LeagueClient',       // 英雄联盟客户端
-      'League of Legends.exe', 'League of Legends', // 英雄联盟游戏
-      'VALORANT-Win64-Shipping.exe',             // Valorant
-      'LoR.exe',                                 // Legends of Runeterra
+      'RiotClientServices.exe',
+      'RiotClientServices',
+      'LeagueClient.exe',
+      'LeagueClient', // 英雄联盟客户端
+      'League of Legends.exe',
+      'League of Legends', // 英雄联盟游戏
+      'VALORANT-Win64-Shipping.exe', // Valorant
+      'LoR.exe', // Legends of Runeterra
     ],
     category: 'game',
   },
@@ -252,6 +265,7 @@ export function getAppPreset(
         iconUrl: custom.iconUrl,
         geositeTags: custom.geositeTags,
         geoipTags: custom.geoipTags,
+        processNames: custom.processNames,
         category: 'tools', // 自定义应用默认归类到工具
       };
     }
