@@ -79,7 +79,6 @@ export const APP_PRESETS: AppPreset[] = [
     emoji: '🐦',
     iconUrl: `${QURE_BASE}/X.png`,
     geositeTags: ['twitter'],
-    geoipTags: ['twitter'],
     processNames: ['Twitter', 'X', 'Twitter.exe'],
     category: 'social',
   },

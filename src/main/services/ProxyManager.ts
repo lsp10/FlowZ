@@ -302,6 +302,7 @@ export interface IProxyManager {
   start(config: UserConfig): Promise<void>;
   stop(): Promise<void>;
   restart(config: UserConfig): Promise<void>;
+  needsRestart(newConfig: UserConfig): boolean;
   getStatus(): ProxyStatus;
   generateSingBoxConfig(config: UserConfig): Promise<SingBoxConfig>;
   getCurrentConfig(): UserConfig | null;
@@ -501,6 +502,8 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
    */
   private async restartSingBoxWithSudo(config: UserConfig): Promise<void> {
     const oldPid = this.singboxPid;
+    const oldProcess = this.singboxProcess;
+    const oldConfig = this.currentConfig;
     this.logToManager('info', `正在停止 sing-box 进程 (PID: ${oldPid})...`);
 
     // 先停止健康检查和日志监控
@@ -594,10 +597,22 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
             reject(new Error(error));
           }
         } else {
-          const errorMessage =
-            code === 1 ? '用户取消了管理员权限请求' : `重启失败，退出码: ${code}`;
-          this.logToManager('error', errorMessage);
-          this.cleanup();
+          const isCancelled = code === 1;
+          const errorMessage = isCancelled
+            ? '用户取消了管理员权限请求'
+            : `重启失败，退出码: ${code}`;
+          this.logToManager(isCancelled ? 'info' : 'error', errorMessage);
+
+          if (isCancelled && oldPid) {
+            // 用户取消密码，osascript 未执行任何命令，旧进程仍在运行
+            this.singboxPid = oldPid;
+            this.singboxProcess = oldProcess;
+            this.currentConfig = oldConfig;
+            this.startLogFileWatcher();
+            this.startHealthCheck();
+          } else {
+            this.cleanup();
+          }
           reject(new Error(errorMessage));
         }
       });
@@ -635,39 +650,28 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   }
 
   /**
-   * 检查模式是否变化
+   * 判断新配置是否需要重启代理（路由相关字段是否变化）
    */
-  private hasModeChanged(newConfig: UserConfig): boolean {
+  needsRestart(newConfig: UserConfig): boolean {
     if (!this.currentConfig) {
       return true;
     }
 
-    // 检查代理模式
-    if (this.currentConfig.proxyMode !== newConfig.proxyMode) {
-      return true;
-    }
+    const old = this.currentConfig;
 
-    // 检查代理模式类型
-    if (this.currentConfig.proxyModeType !== newConfig.proxyModeType) {
-      return true;
-    }
-
-    // 检查选中的服务器
-    if (this.currentConfig.selectedServerId !== newConfig.selectedServerId) {
-      return true;
-    }
-
-    // 检查端口
     if (
-      this.currentConfig.socksPort !== newConfig.socksPort ||
-      this.currentConfig.httpPort !== newConfig.httpPort
+      old.proxyMode !== newConfig.proxyMode ||
+      old.proxyModeType !== newConfig.proxyModeType ||
+      old.selectedServerId !== newConfig.selectedServerId ||
+      old.socksPort !== newConfig.socksPort ||
+      old.httpPort !== newConfig.httpPort ||
+      old.allowLan !== newConfig.allowLan
     ) {
       return true;
     }
 
-    // 检查 TUN 配置（如果是 TUN 模式）
     if (newConfig.proxyModeType === 'tun') {
-      const oldTun = this.currentConfig.tunConfig;
+      const oldTun = old.tunConfig;
       const newTun = newConfig.tunConfig;
 
       if (
@@ -680,12 +684,25 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       }
     }
 
-    // 检查自定义规则
-    if (JSON.stringify(this.currentConfig.customRules) !== JSON.stringify(newConfig.customRules)) {
+    const jsonCompare = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+
+    if (
+      jsonCompare(old.customRules, newConfig.customRules) ||
+      jsonCompare(old.appRules, newConfig.appRules) ||
+      jsonCompare(old.customAppPresets, newConfig.customAppPresets) ||
+      jsonCompare(old.customRuleSets, newConfig.customRuleSets) ||
+      jsonCompare(old.bypassProcesses, newConfig.bypassProcesses) ||
+      jsonCompare(old.dnsConfig, newConfig.dnsConfig) ||
+      jsonCompare(old.servers, newConfig.servers)
+    ) {
       return true;
     }
 
     return false;
+  }
+
+  private hasModeChanged(newConfig: UserConfig): boolean {
+    return this.needsRestart(newConfig);
   }
 
   /**
@@ -2005,7 +2022,9 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         // b. 基于原有 rule_set 的规则（兜底，基于域名/IP 识别）
         const ruleSets = [
           ...preset.geositeTags.map((tag) => `geosite-${tag}`),
-          ...(preset.geoipTags || []).map((tag) => `geoip-${tag}`),
+          ...(preset.geoipTags || [])
+            .filter((tag) => /^[a-z]{2}$/.test(tag))
+            .map((tag) => `geoip-${tag}`),
         ];
 
         if (ruleSets.length > 0) {
@@ -2173,7 +2192,11 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       if (preset) {
         preset.geositeTags.forEach((tag) => geositeCategories.add(tag));
         if (preset.geoipTags) {
-          preset.geoipTags.forEach((tag) => geoipCategories.add(tag));
+          // sing-geoip 仓库只有国家/地区代码级别的规则集（如 cn, us, jp），
+          // 不存在应用级别的（如 twitter, telegram），过滤掉无效标签避免 sing-box FATAL
+          preset.geoipTags
+            .filter((tag) => /^[a-z]{2}$/.test(tag))
+            .forEach((tag) => geoipCategories.add(tag));
         }
       }
     }

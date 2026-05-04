@@ -1165,32 +1165,39 @@ app.whenReady().then(async () => {
     }
   }, 8000);
 
-  // 监听配置变更事件，更新托盘菜单并自动重启代理
-  mainEventEmitter.on(MAIN_EVENTS.CONFIG_CHANGED, async () => {
-    // 1. 更新托盘菜单
+  // 监听配置变更事件，更新托盘菜单并按需重启代理（1 秒防抖）
+  let restartDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  mainEventEmitter.on(MAIN_EVENTS.CONFIG_CHANGED, () => {
+    // 1. 更新托盘菜单（立即执行）
     const isRunning = proxyManager?.getStatus().running ?? false;
     updateTrayMenuState(isRunning);
 
-    // 2. 如果代理正在运行，自动重启以应用新配置
+    // 2. 如果代理正在运行，防抖后判断是否需要重启
     if (isRunning && proxyManager) {
-      logManager.addLog('info', 'Configuration changed, restarting proxy...', 'Main');
-      try {
-        const latestConfig = await configManager.loadConfig();
-        await proxyManager.restart(latestConfig);
-        logManager.addLog('info', 'Proxy restarted successfully with new configuration', 'Main');
+      if (restartDebounceTimer) clearTimeout(restartDebounceTimer);
+      restartDebounceTimer = setTimeout(async () => {
+        restartDebounceTimer = null;
+        try {
+          const latestConfig = await configManager.loadConfig();
+          if (!proxyManager!.needsRestart(latestConfig)) return;
 
-        // 重启后再次更新托盘（以防状态有变）
-        updateTrayMenuState(true);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logManager.addLog(
-          'error',
-          `Failed to restart proxy after config change: ${errorMessage}`,
-          'Main'
-        );
-        // 重启失败，更新托盘状态为停止
-        updateTrayMenuState(false, true);
-      }
+          logManager.addLog('info', 'Configuration changed, restarting proxy...', 'Main');
+          await proxyManager!.restart(latestConfig);
+          logManager.addLog('info', 'Proxy restarted successfully with new configuration', 'Main');
+          updateTrayMenuState(true);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logManager.addLog(
+            'error',
+            `Failed to restart proxy after config change: ${errorMessage}`,
+            'Main'
+          );
+          // 只有非取消的错误才更新托盘为停止状态
+          if (!errorMessage.includes('取消')) {
+            updateTrayMenuState(false, true);
+          }
+        }
+      }, 1000);
     }
   });
 
