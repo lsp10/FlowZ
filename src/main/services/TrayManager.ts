@@ -484,6 +484,11 @@ export class TrayManager implements ITrayManager {
       this.mainWindow.destroy();
       this.logManager.addLog('info', 'Main window destroyed for lightweight mode', 'TrayManager');
 
+      // macOS: 隐藏 Dock 图标，仅保留托盘
+      if (process.platform === 'darwin' && app.dock) {
+        app.dock.hide();
+      }
+
       // 窗口销毁后执行主进程内存清理：
       // 1. 清空日志缓冲区（释放 5-10MB 内存中积累的日志对象）
       // 2. 触发 V8 GC（回收孤立的闭包、IPC handler 引用、缓存 config 对象等，约 15-25MB）

@@ -139,6 +139,9 @@ process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
  * 如果窗口不存在则创建，如果已存在则显示并聚焦
  */
 async function showWindow() {
+  if (process.platform === 'darwin' && app.dock) {
+    await app.dock.show();
+  }
   if (mainWindow) {
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -351,7 +354,9 @@ async function createWindow() {
           );
           if (trayManager) {
             trayManager.enterLightweightMode();
-            // TrayManager.enterLightweightMode 内部已包含 GC + 日志清理
+            if (process.platform === 'darwin' && app.dock) {
+              app.dock.hide();
+            }
           }
           inactivityTimer = null;
         }, INACTIVITY_TIMEOUT);
