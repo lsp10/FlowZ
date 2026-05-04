@@ -82,15 +82,68 @@ xattr -cr /Applications/FlowZ.app
 
 ## 🛠 从源码构建
 
+### 开发模式
+
 ```bash
 git clone https://github.com/zhangjh/FlowZ.git
 cd FlowZ
 
 npm install
 npm run dev
-npm run build
-npm run package:win
+```
+
+### 生产打包（macOS）
+
+完整打包流程分为 5 步：编译主进程 → 编译渲染进程 → Electron 打包 → 签名 → 生成 DMG。
+
+```bash
+# 1. 编译主进程 TypeScript → dist/main/
+npm run build:main
+
+# 2. 编译渲染进程 (Vite) → dist/renderer/
+npx vite build
+
+# 3. Electron Builder 打包为 .app（自动包含 sing-box 二进制和规则集）
 npm run package:mac
+
+# 4. Ad-hoc 签名（无 Apple 开发者证书时必须，否则 macOS 拒绝运行）
+codesign --force --deep --sign - dist-package/mac/FlowZ.app
+
+# 5. 生成 DMG 安装镜像
+hdiutil create -volname "FlowZ-3.4.5" \
+  -srcfolder dist-package/mac/FlowZ.app \
+  -ov -format UDZO \
+  dist-package/FlowZ-3.4.5-mac-x64.dmg
+```
+
+**一行快速打包（复制即用）：**
+
+```bash
+npm run build:main && npx vite build && npm run package:mac && codesign --force --deep --sign - dist-package/mac/FlowZ.app && hdiutil create -volname "FlowZ-3.4.5" -srcfolder dist-package/mac/FlowZ.app -ov -format UDZO dist-package/FlowZ-3.4.5-mac-x64.dmg
+```
+
+**各步骤说明：**
+
+| 步骤 | 命令 | 产物 | 说明 |
+|---|---|---|---|
+| 1 | `npm run build:main` | `dist/main/` | 将主进程 TypeScript 编译为 JavaScript |
+| 2 | `npx vite build` | `dist/renderer/` | 将 React 渲染进程打包为静态资源 |
+| 3 | `npm run package:mac` | `dist-package/mac/FlowZ.app` | Electron Builder 将编译产物、sing-box 核心、规则集打包为 macOS 应用 |
+| 4 | `codesign` | 原地签名 | macOS Gatekeeper 要求所有 .app 必须签名，Ad-hoc 签名可在本机运行 |
+| 5 | `hdiutil create` | `dist-package/FlowZ-3.4.5-mac-x64.dmg` | 生成可分发的 DMG 安装镜像 |
+
+**注意事项：**
+
+- 版本号在 `package.json` 中定义（当前 3.4.5），DMG 文件名需同步更新
+- `npm run package:mac` 内部会再次调用 vite build，步骤 2 可省略，但单独跑可以提前发现渲染层编译错误
+- macOS Intel (x64) 用户需要修改 `electron-builder.json` 中的 arch 为 `["x64"]`
+
+### 生产打包（Windows）
+
+```bash
+npm run build:main
+npx vite build
+npm run package:win
 ```
 
 macOS Intel 用户需要修改 `electron-builder.json`：

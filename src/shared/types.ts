@@ -226,7 +226,7 @@ export interface TunModeConfig {
 export interface DnsConfig {
   domesticDns: string; // 国内 DNS，默认 https://doh.pub/dns-query
   foreignDns: string; // 海外 DNS，默认 https://dns.google/dns-query
-  enableFakeIp: boolean; // 是否启用 FakeIP（TUN 模式）
+  enableFakeIp: boolean; // 是否启用 FakeIP
 }
 
 // 自定义规则集（从 URL 导入）

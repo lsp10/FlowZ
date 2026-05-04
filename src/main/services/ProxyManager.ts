@@ -922,12 +922,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       enableFakeIp: false,
     };
 
-    // 决定是否开启 FakeIP。
-    // 在 TUN 模式下强制开启 FakeIP。
-    // 原因：很多第三方机场的节点防滥用严格，如果收到纯 IP 地址而非域名，会直接拒绝连接并抛出无效证书或拦截页面。
-    // 配合我们刚刚修复的 macOS gvisor strict_route DHCP DNS 劫持逻辑，
-    // FakeIP 现在能够 100% 完美的用内部 cache 把假 IP 还原成真域名丢给代理节点。
-    // 从而完美避开机场对纯 IP 请求的无情封杀！
+    // FakeIP 由用户在 DNS 配置中手动控制开关，所有代理模式下均可使用。
     const enableFakeIp = userDnsConfig.enableFakeIp;
 
     // sing-box 1.13+ 新格式：每个 server 必须有显式 type 字段
