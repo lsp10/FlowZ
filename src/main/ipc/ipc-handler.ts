@@ -29,6 +29,7 @@ export class IpcHandlerRegistry {
   register<TArgs = any, TResult = any>(channel: string, handler: IpcHandler<TArgs, TResult>): void {
     if (this.handlers.has(channel)) {
       console.warn(`IPC handler for channel "${channel}" is already registered. Overwriting.`);
+      ipcMain.removeHandler(channel);
     }
 
     // 包装处理器，添加错误处理和响应格式化
