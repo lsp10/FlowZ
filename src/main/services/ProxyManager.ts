@@ -367,7 +367,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   /**
    * 启动代理
    */
-  async start(config: UserConfig): Promise<void> {
+  async start(config: UserConfig, options?: { skipPortWait?: boolean }): Promise<void> {
     // 如果已经在运行，先停止
     if (this.singboxProcess || this.singboxPid) {
       await this.stop();
@@ -381,12 +381,14 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     // 先保存当前配置（needsRootPrivilege 等方法需要用到）
     this.currentConfig = config;
 
-    // 清理可能残留的 sing-box 进程（例如从 TUN 模式切换到系统代理模式时，
-    // 旧的 root sing-box 进程可能仍占用端口）
-    await this.killOrphanedSingBoxProcesses();
+    if (!options?.skipPortWait) {
+      // 清理可能残留的 sing-box 进程（例如从 TUN 模式切换到系统代理模式时，
+      // 旧的 root sing-box 进程可能仍占用端口）
+      await this.killOrphanedSingBoxProcesses();
 
-    // 等待端口释放（残留进程被杀后 OS 需要时间回收端口）
-    await this.waitForPortRelease(9090, 8000);
+      // 等待端口释放（残留进程被杀后 OS 需要时间回收端口）
+      await this.waitForPortRelease(9090, 8000);
+    }
 
     // 0. 获取核心版本（用于后续生成兼容的配置文件）
     this.coreVersion = await this.getCoreVersion();
@@ -482,9 +484,130 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
    * 重启代理
    */
   async restart(config: UserConfig): Promise<void> {
+    // macOS TUN 模式快速路径：合并 stop + start 为单次 osascript 调用，只弹一次密码
+    if (this.singboxPid && process.platform === 'darwin' && config.proxyModeType === 'tun') {
+      await this.restartSingBoxWithSudo(config);
+      return;
+    }
+
     await this.stop();
     await this.waitForPortRelease(9090, 8000);
-    await this.start(config);
+    await this.start(config, { skipPortWait: true });
+  }
+
+  /**
+   * macOS TUN 模式专用：合并 kill 旧进程 + 启动新进程为单次 osascript 调用
+   * 只需用户输入一次密码，而非 stop 一次 + start 一次
+   */
+  private async restartSingBoxWithSudo(config: UserConfig): Promise<void> {
+    const oldPid = this.singboxPid;
+    this.logToManager('info', `正在停止 sing-box 进程 (PID: ${oldPid})...`);
+
+    // 先停止健康检查和日志监控
+    this.stopHealthCheck();
+    this.stopLogFileWatcher();
+
+    // 保存新配置并准备资源（在弹密码框之前完成所有准备工作）
+    this.currentConfig = config;
+    this.coreVersion = await this.getCoreVersion();
+    this.logToManager('info', `检测到 sing-box 核心版本: ${this.coreVersion}`);
+
+    await this.fixFilePermissions();
+
+    if (!config.selectedServerId) {
+      throw new Error('No server selected');
+    }
+    const selectedServer = config.servers.find((s) => s.id === config.selectedServerId);
+    if (!selectedServer) {
+      throw new Error('Selected server not found');
+    }
+
+    await this.copyRuleSetsToUserData();
+    const singboxConfig = await this.generateSingBoxConfig(config);
+    await this.writeSingBoxConfig(singboxConfig);
+    this.logToManager('info', 'sing-box 配置文件已生成');
+
+    // 构建合并的 shell 命令：kill 旧进程 → 等待端口释放 → 启动新进程
+    const pidFile = path.join(getUserDataPath(), 'singbox.pid');
+    const startupLogFile = path.join(getUserDataPath(), 'singbox_startup.log');
+
+    const forwardCmd = config.allowLan
+      ? 'sysctl -w net.ipv4.ip_forward=1; sysctl -w net.ipv6.conf.all.forwarding=1; '
+      : '';
+
+    // kill 旧进程 + 等待退出 + 启动新进程，一次 osascript 完成
+    const shellCmd = [
+      `kill -TERM ${oldPid} 2>/dev/null`,
+      'sleep 1',
+      `kill -0 ${oldPid} 2>/dev/null && kill -9 ${oldPid} 2>/dev/null; sleep 0.5`,
+      forwardCmd,
+      `"${this.singboxPath}" run -c "${this.configPath}" > "${startupLogFile}" 2>&1 &`,
+      `echo $! > "${pidFile}"`,
+    ].join('; ');
+
+    this.logToManager('info', 'TUN 模式重启，正在请求管理员权限...');
+
+    // 删除旧 PID 文件
+    await this.deletePidFile();
+
+    // 注入环境变量
+    const spawnEnv = { ...process.env };
+    const cvArr = this.coreVersion.split('.');
+    const cvNum = parseFloat(cvArr[0] + '.' + (cvArr[1] || '0'));
+    if (isNaN(cvNum) || cvNum < 1.13) {
+      spawnEnv['ENABLE_DEPRECATED_DESTINATION_OVERRIDE_FIELDS'] = 'true';
+    }
+
+    return new Promise((resolve, reject) => {
+      const osascriptProc = spawn(
+        '/usr/bin/osascript',
+        ['-e', `do shell script "/bin/bash -c '${shellCmd}'" with administrator privileges`],
+        { stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv }
+      );
+
+      this.singboxProcess = osascriptProc;
+      this.pid = osascriptProc.pid || null;
+      this.startTime = new Date();
+      this.singboxPid = null;
+
+      osascriptProc.on('exit', async (code) => {
+        if (code === 0) {
+          this.logToManager('info', 'sing-box 进程已重启');
+
+          // 等待 PID 文件写入
+          await this.waitForPidFile();
+
+          if (this.singboxPid) {
+            this.startLogFileWatcher();
+            this.startHealthCheck();
+            this.emit('started');
+            this.sendEventToRenderer(IPC_CHANNELS.EVENT_PROXY_STARTED, {
+              pid: this.singboxPid,
+              startTime: this.startTime,
+            });
+            this.logToManager('info', 'sing-box 进程启动成功');
+            resolve();
+          } else {
+            const error = '重启 sing-box 失败：无法获取新进程 PID';
+            this.logToManager('error', error);
+            this.cleanup();
+            reject(new Error(error));
+          }
+        } else {
+          const errorMessage =
+            code === 1 ? '用户取消了管理员权限请求' : `重启失败，退出码: ${code}`;
+          this.logToManager('error', errorMessage);
+          this.cleanup();
+          reject(new Error(errorMessage));
+        }
+      });
+
+      osascriptProc.on('error', (error) => {
+        this.logToManager('error', `重启 sing-box 失败: ${error.message}`);
+        this.cleanup();
+        reject(error);
+      });
+    });
   }
 
   /**
@@ -3096,7 +3219,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       if (!inUse) return;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    this.logToManager('warn', `端口 ${port} 在 ${timeout}ms 内未释放`);
+    this.logToManager('debug', `端口 ${port} 在 ${timeout}ms 内未释放，继续启动`);
   }
 
   /**
