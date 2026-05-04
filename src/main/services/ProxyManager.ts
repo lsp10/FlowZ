@@ -463,6 +463,11 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     if (config.proxyModeType === 'systemProxy') {
       await this.setSystemProxy(config);
     }
+
+    // TUN 模式下，macOS 需要将系统 DNS 指向 TUN 地址，否则 DNS 请求走物理网卡绕过 hijack-dns
+    if (config.proxyModeType === 'tun' && process.platform === 'darwin') {
+      await this.setSystemDns('172.19.0.1');
+    }
   }
 
   /**
@@ -477,6 +482,15 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     // 如果当前是系统代理模式，取消系统代理
     if (this.currentConfig && this.currentConfig.proxyModeType === 'systemProxy') {
       await this.unsetSystemProxy();
+    }
+
+    // TUN 模式下恢复系统 DNS
+    if (
+      this.currentConfig &&
+      this.currentConfig.proxyModeType === 'tun' &&
+      process.platform === 'darwin'
+    ) {
+      await this.unsetSystemDns();
     }
 
     await this.stopSingBoxProcess();
@@ -914,8 +928,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     // 配合我们刚刚修复的 macOS gvisor strict_route DHCP DNS 劫持逻辑，
     // FakeIP 现在能够 100% 完美的用内部 cache 把假 IP 还原成真域名丢给代理节点。
     // 从而完美避开机场对纯 IP 请求的无情封杀！
-    const enableFakeIp =
-      config.proxyModeType?.toLowerCase() !== 'systemproxy' ? true : userDnsConfig.enableFakeIp;
+    const enableFakeIp = userDnsConfig.enableFakeIp;
 
     // sing-box 1.13+ 新格式：每个 server 必须有显式 type 字段
     //
@@ -1844,8 +1857,10 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     // 游戏的 UDP 443 流量在被应用分流规则匹配之前就已经被 reject 了。
     // 移动到后面可以让用户的应用分流规则优先级更高。
 
-    // 【DNS 引导与辅助直连】：
-    // 确保以下公共 DNS IP 不会被后面的 block 规则拦截，从而保证 DoH 握手和初次域名解析。
+    // 【阻断浏览器 DoH/DoT 泄漏】：
+    // 现代浏览器（Chrome/Firefox/Edge）会通过 HTTPS 443 或 DoT 853 端口向公共 DNS IP 发起加密 DNS 请求，
+    // 完全绕过系统 DNS 和 TUN 的 hijack-dns（仅劫持 port 53）。
+    // 必须阻断这些 IP 的 443/853 端口，迫使浏览器回退到 UDP 53，从而被 hijack-dns 劫持进入 FakeIP 体系。
     rules.push({
       ip_cidr: [
         '8.8.8.8/32',
@@ -1856,21 +1871,16 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         '149.112.112.112/32',
         '208.67.222.222/32',
         '208.67.220.220/32',
-        // IPv6 Public DNS
         '2001:4860:4860::8888/128',
         '2001:4860:4860::8844/128',
         '2606:4700:4700::1111/128',
         '2606:4700:4700::1001/128',
       ],
-      port: [53, 443, 853],
+      port: [443, 853],
       action: 'route',
-      outbound: 'direct',
+      outbound: 'block',
     });
-
-    // 【终极绝杀隐私 DoH 泄漏】：
-    // 现代浏览器会尝试通过常规 HTTPS 端口向特定域名发起 DoH 请求。
-    // 我们在这里将这些特定的 DoH 域名强制阻断（Block），从而迫使浏览器退回到系统标准的 UDP 53。
-    // 这样流量就能重新被 hijack-dns 捕获并进入我们的 DNS 分流/FakeIP 体系。
+    // 同时阻断域名形式的 DoH 请求（浏览器可能通过域名而非 IP 访问 DoH 服务）
     rules.push({
       domain_keyword: [
         'dns.google',
@@ -1878,6 +1888,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         'doh.opendns.com',
         'dns.quad9.net',
         'one.one.one.one',
+        'dns.alidns.com',
       ],
       port: [443, 853],
       action: 'route',
@@ -4266,6 +4277,60 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       } catch (error) {
         this.logToManager('error', `取消 macOS 系统代理失败: ${error}`);
       }
+    }
+  }
+
+  private async setSystemDns(dnsServer: string): Promise<void> {
+    try {
+      const { execSync } = require('child_process');
+      const servicesOutput = execSync('networksetup -listallnetworkservices').toString();
+      const services = servicesOutput
+        .split('\n')
+        .filter(
+          (s: string) =>
+            s &&
+            !s.includes('*') &&
+            s !== 'An asterisk (*) denotes that a network service is disabled.'
+        );
+
+      for (const service of services) {
+        try {
+          const s = service.trim();
+          execSync(`networksetup -setdnsservers "${s}" ${dnsServer}`);
+        } catch {
+          // ignore
+        }
+      }
+      this.logToManager('info', `macOS 系统 DNS 已设置为 ${dnsServer}`);
+    } catch (error) {
+      this.logToManager('error', `设置 macOS 系统 DNS 失败: ${error}`);
+    }
+  }
+
+  private async unsetSystemDns(): Promise<void> {
+    try {
+      const { execSync } = require('child_process');
+      const servicesOutput = execSync('networksetup -listallnetworkservices').toString();
+      const services = servicesOutput
+        .split('\n')
+        .filter(
+          (s: string) =>
+            s &&
+            !s.includes('*') &&
+            s !== 'An asterisk (*) denotes that a network service is disabled.'
+        );
+
+      for (const service of services) {
+        try {
+          const s = service.trim();
+          execSync(`networksetup -setdnsservers "${s}" Empty`);
+        } catch {
+          // ignore
+        }
+      }
+      this.logToManager('info', 'macOS 系统 DNS 已恢复为自动');
+    } catch (error) {
+      this.logToManager('error', `恢复 macOS 系统 DNS 失败: ${error}`);
     }
   }
 }
