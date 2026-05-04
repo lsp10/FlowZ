@@ -3742,6 +3742,8 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       'connection established',
       'tls handshake',
       'handshake completed',
+      'found process path', // sing-box 进程路径查找，纯调试信息
+      'outbound packet connection', // UDP 包路由，频繁且无用
     ];
 
     for (const pattern of noisePatterns) {
@@ -3810,6 +3812,8 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
   /** 最近处理过的日志消息，用于去重，最多缓存 10 条 */
   private recentLogHistory: string[] = [];
+  private lastGenericTimeoutTime = 0;
+  private suppressedTimeoutCount = 0;
 
   /**
    * 检查是否为重复日志
@@ -3950,9 +3954,23 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       const target = match ? match[1] : '';
       // 私有 IP 超时不显示（内网服务走代理必然超时）
       if (target && /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(target)) {
-        return ''; // 返回空字符串，后续会被过滤
+        return '';
       }
-      return target ? `连接超时: ${target}` : '连接超时：服务器响应超时';
+      if (target) {
+        return `连接超时: ${target}`;
+      }
+      // 无目标地址的超时：节流处理，10 秒内只显示一次
+      const now = Date.now();
+      if (now - this.lastGenericTimeoutTime < 10000) {
+        this.suppressedTimeoutCount++;
+        return '';
+      }
+      const suppressed = this.suppressedTimeoutCount;
+      this.lastGenericTimeoutTime = now;
+      this.suppressedTimeoutCount = 0;
+      return suppressed > 0
+        ? `连接超时：服务器响应超时（近期已抑制 ${suppressed} 条相同日志）`
+        : '连接超时：服务器响应超时';
     }
 
     if (lowerMessage.includes('dns') && lowerMessage.includes('fail')) {
