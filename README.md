@@ -140,13 +140,26 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 
 系统内置了 YouTube、Netflix、TikTok、Telegram、Twitter、OpenAI、Claude、Steam 等常用应用预设。如果需要的应用不在预设列表中，可以通过自定义预设添加。
 
-### 预设字段说明
+### UI 表单与数据字段的对应关系
+
+在 UI 中点击「新增自定义应用分流」时，弹窗有以下输入项：
+
+| UI 表单标签 | 对应数据字段 | 说明 |
+|---|---|---|
+| **图标** | `emoji` + `iconUrl` | 点击可从 Qure / EDC 图标库选择彩色图标（写入 `iconUrl`）；未选择时使用 emoji 兜底 |
+| **名称** | `name` | 纯显示用途，在应用列表中展示的名称。**不参与任何路由匹配**，不是 `id` 也不是 `processNames`。`id` 由系统自动生成（格式 `custom-{timestamp}`） |
+| **Geosite** | `geositeTags` | 核心匹配字段，多个标签用英文逗号分隔。如填 `binance` 则匹配 `geosite-binance` 域名规则集 |
+| **GeoIP** | `geoipTags` | 可选，按目标 IP 段匹配，多个标签用英文逗号分隔 |
+
+> `processNames`（进程名匹配）目前仅系统内置预设支持，自定义预设暂不提供该输入项。自定义应用的流量匹配完全依赖 Geosite 和 GeoIP 规则集。
+
+### 匹配字段详解
 
 | 字段 | 含义 |
 |---|---|
 | `geositeTags` | sing-box geosite 规则集标签，按域名匹配流量。如 `["youtube"]` 会匹配所有 YouTube 相关域名（youtube.com、googlevideo.com 等）。**TUN 和系统代理模式都生效** |
 | `geoipTags` | sing-box geoip 规则集标签，按目标 IP 段匹配流量。如 `["twitter"]` 包含 Twitter 的 IP 段。**TUN 和系统代理模式都生效** |
-| `processNames` | 进程名列表，按操作系统进程名匹配。如 `["Telegram", "Telegram.exe"]`。**仅 TUN 模式生效**，系统代理模式下 sing-box 无法获取进程信息 |
+| `processNames` | 进程名列表，按操作系统进程名匹配。如 `["Telegram", "Telegram.exe"]`。**仅 TUN 模式生效**，系统代理模式下 sing-box 无法获取进程信息。仅内置预设可用 |
 
 ### 三个字段如何协同工作
 
@@ -185,24 +198,36 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 
 ### 示例：添加币安 (Binance) 应用分流
 
-币安不在系统预设中，需要通过自定义预设添加。
+币安不在系统预设中，需要通过自定义预设添加。以下是完整的 UI 操作步骤：
 
-**1. 添加自定义应用预设**
+**第一步：创建自定义应用预设**
 
-在设置中添加自定义应用预设，填写以下信息：
+打开规则页面 → 点击「新增自定义应用分流」，在弹窗中填写：
 
-| 字段 | 值 | 说明 |
+| 表单项 | 填写内容 | 说明 |
 |---|---|---|
-| 名称 | `Binance 币安` | 显示名称 |
-| Emoji | `💰` | 备用图标 |
-| geositeTags | `["binance"]` | 对应 `geosite-binance` 规则集，匹配 `binance.com`、`binance.cloud`、`bnbstatic.com` 等域名 |
-| geoipTags | `[]` | 币安没有专属 IP 段，留空即可 |
+| 图标 | 从图标库选择 Binance 图标，或保持默认 emoji | 仅影响显示 |
+| 名称 | `Binance 币安` | 列表中的显示名称，不影响路由匹配 |
+| Geosite | `binance` | 匹配 `binance.com`、`binance.cloud`、`bnbstatic.com` 等域名 |
+| GeoIP | 留空 | 币安没有专属 IP 段 |
 
-对应的 JSON 配置：
+点击确认后，币安会出现在应用分流列表中。
+
+**第二步：设置流量策略**
+
+在应用列表中找到刚添加的「Binance 币安」，选择流量策略：
+
+- **代理** — 币安流量走代理服务器（可进一步指定特定服务器）
+- **直连** — 币安流量不经过代理
+- **屏蔽** — 拦截币安流量
+
+**对应的 JSON 配置（供参考）**
+
+自定义预设保存在 `UserConfig.customAppPresets` 中：
 
 ```json
 {
-  "id": "binance",
+  "id": "custom-1714800000000",
   "name": "Binance 币安",
   "emoji": "💰",
   "geositeTags": ["binance"],
@@ -210,32 +235,17 @@ macOS Intel 用户需要修改 `electron-builder.json`：
 }
 ```
 
-**2. 添加应用规则**
-
-创建规则，将币安流量走代理：
+应用规则保存在 `UserConfig.appRules` 中：
 
 ```json
 {
-  "appId": "binance",
+  "appId": "custom-1714800000000",
   "action": "proxy",
   "enabled": true
 }
 ```
 
-如需指定特定服务器：
-
-```json
-{
-  "appId": "binance",
-  "action": "proxy",
-  "enabled": true,
-  "targetServerId": "你的服务器ID"
-}
-```
-
-如需直连或屏蔽，将 `action` 改为 `"direct"` 或 `"block"` 即可。
-
-> 以上操作均可在 UI 的规则页面完成，无需手动编辑 JSON。
+`id` 和 `appId` 由系统自动生成，格式为 `custom-{时间戳}`，两者必须一致才能关联。如需指定特定代理服务器，添加 `"targetServerId": "服务器ID"`。
 
 ---
 
