@@ -588,6 +588,85 @@ rm -rf /Applications/FlowZ.app && cp -R /Users/shipengliu/flowz/FlowZ/dist-packa
 
 ---
 
+## 🔄 升级 sing-box 核心指南
+
+### 需要改动的文件
+
+| 文件 | 改动内容 |
+|------|----------|
+| `resources/mac-x64/sing-box` | 替换为新版二进制（macOS Intel） |
+| `resources/mac-arm64/sing-box` | 替换为新版二进制（macOS Apple Silicon） |
+| `resources/win/sing-box.exe` | 替换为新版二进制（Windows） |
+| `resources/linux/sing-box` | 替换为新版二进制（Linux） |
+| `package.json` → `singboxVersion` | 更新版本号字符串 |
+| `src/main/services/ProxyManager.ts` | 核心配置生成逻辑（见下方详细说明） |
+| `src/main/services/CoreUpdateService.ts` | 如果 release asset 命名规则变化需更新匹配逻辑 |
+
+### ProxyManager.ts 中的版本分支逻辑
+
+代码中通过 `parseFloat(major.minor)` 与 `1.13` 比较来区分新旧配置格式：
+
+| 功能 | < 1.13（旧格式） | >= 1.13（新格式） |
+|------|------------------|-------------------|
+| 流量嗅探 | inbound 层 `sniff: true` | route 层 `action: sniff` |
+| DNS bootstrap | 无 `detour` 字段 | 加 `detour: direct` |
+| `direct-loopback` outbound | 需要添加 | 不需要 |
+| U-key 域名路由 | `outbound: direct-loopback` | route rule 加 `override_address` |
+| 环境变量 | 设置 `ENABLE_DEPRECATED_DESTINATION_OVERRIDE_FIELDS=true` | 不设置 |
+
+**升级时重点关注：**
+- 阅读新版本 [CHANGELOG](https://github.com/SagerNet/sing-box/blob/main/CHANGELOG.md)，确认是否有字段废弃/新增/改名
+- 如果新版本有 breaking changes，在 `generateSingBoxConfig()` 中增加新版本分支或清理旧分支
+- 特别关注 `dns`、`route`、`inbounds`、`experimental` 顶层结构变化
+
+### 测试步骤
+
+**1. 配置校验**
+
+```bash
+# 用新版 sing-box 校验生成的配置文件
+./resources/mac-x64/sing-box check -c ~/Library/Application\ Support/FlowZ/singbox_config.json
+```
+
+如果报错，根据错误信息修改 `generateSingBoxConfig()`。
+
+**2. 功能矩阵测试**
+
+| 测试项 | 验证方法 |
+|--------|----------|
+| 系统代理模式 | 启动代理 → 浏览器访问 google.com |
+| TUN 模式 | 切换 TUN → 终端 `curl google.com` |
+| 智能分流 | baidu.com（直连）+ google.com（代理） |
+| FakeIP | 开启后 `nslookup google.com` 应返回 198.18.x.x |
+| 各协议 | 分别测试 VLESS/VMess/Trojan/SS/Hysteria2/NaiveProxy |
+| 应用分流 | 配置某应用走直连，验证流量路径 |
+| 节点切换 | 运行中切换节点，确认重启生效 |
+| Clash API | 首页拓扑图和流量统计正常显示 |
+| DNS 泄漏 | 访问 dnsleaktest.com 确认无泄漏 |
+
+**3. 完整回归流程**
+
+```bash
+# 编译
+npm run build
+
+# 配置校验
+./resources/mac-x64/sing-box check -c ~/Library/Application\ Support/FlowZ/singbox_config.json
+
+# 打包安装运行
+npm run package:mac
+rm -rf /Applications/FlowZ.app && cp -R /Users/shipengliu/flowz/FlowZ/dist-package/mac/FlowZ.app /Applications/ && open /Applications/FlowZ.app
+
+# 查看日志确认无报错
+tail -f ~/Library/Application\ Support/FlowZ/singbox.log
+```
+
+**4. 回退方案**
+
+`CoreUpdateService.ts` 内置了 rollback 机制（备份为 `.bak` 文件）。如果新版本有问题，可通过应用内「核心管理」回退到上一版本。
+
+---
+
 ## 📄 开源协议
 
 MIT License
