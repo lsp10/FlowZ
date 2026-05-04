@@ -212,6 +212,102 @@ sing-box 采用 **first-match** 机制：从上到下逐条匹配，第一条命
 
 ---
 
+## 🔍 FakeIP 机制与验证
+
+### 什么是 FakeIP
+
+FakeIP 是 FlowZ 在 TUN 模式下的核心 DNS 策略。当应用发起域名解析时，sing-box 不会立即向上游 DNS 查询真实 IP，而是立刻返回一个 `198.18.x.x` 段的虚假 IP。应用拿到这个假 IP 后发起连接，sing-box 通过流量嗅探（sniff）从 TLS ClientHello 中还原出真实域名，再交给路由引擎判断走代理还是直连。
+
+**优势**：
+- 零 DNS 泄漏 — 域名解析不会暴露给 ISP 或 GFW
+- 零 DNS 污染 — 不依赖境内 DNS 返回的真实 IP，避免 GFW 投毒
+- 域名完整传递 — 代理节点收到的是域名而非 IP，兼容 SNI 严格校验的机场节点
+
+### FakeIP 何时启用
+
+| 代理模式类型 | FakeIP 状态 |
+|---|---|
+| **TUN 模式** | 强制开启（无论全局/智能/直连） |
+| **系统代理模式** | 取决于用户 DNS 配置中的 `enableFakeIp` 开关 |
+
+### FakeIP 地址段
+
+| 协议 | 地址段 |
+|---|---|
+| IPv4 | `198.18.0.0/15`（198.18.0.0 ~ 198.19.255.255） |
+| IPv6 | `fc00::/18` |
+
+### 如何验证 FakeIP 已生效
+
+**方法一：nslookup 验证（最直观）**
+
+在终端中解析任意国外域名，如果返回 `198.18.x.x` 段的 IP，说明 FakeIP 生效：
+
+```bash
+# macOS / Linux
+nslookup google.com
+
+# 预期输出（FakeIP 生效）：
+# Server:    198.18.0.1  （或其他 198.18 段地址）
+# Address:   198.18.0.x
+
+# 如果返回的是真实 IP（如 142.250.x.x），说明 FakeIP 未生效
+```
+
+```powershell
+# Windows
+nslookup google.com
+
+# 预期输出（FakeIP 生效）：
+# Address:  198.18.0.x
+```
+
+**方法二：ping 验证**
+
+```bash
+ping -c 1 google.com
+
+# FakeIP 生效时，目标 IP 显示为 198.18.x.x
+# PING google.com (198.18.0.5): 56 data bytes
+# （ICMP 会被 sing-box reject，不会有回复，这是正常的）
+```
+
+**方法三：浏览器开发者工具**
+
+1. 打开 Chrome → F12 → Network 面板
+2. 访问 `https://google.com`
+3. 点击请求 → 查看 Remote Address
+4. 如果显示 `198.18.x.x:443`，说明 FakeIP 生效
+
+**方法四：FlowZ 日志验证**
+
+1. 打开 FlowZ → 日志页面
+2. 访问任意国外网站
+3. 观察日志中的路由命中记录，如果出站连接的目标显示为域名（而非 IP），说明 FakeIP + sniff 工作正常
+
+### 国内域名的处理
+
+FakeIP 对所有 A/AAAA 查询统一返回假 IP。当路由引擎判定流量走直连（如命中 `geosite-cn`）时，sing-box 会在 direct 出站阶段重新发起真实 DNS 解析，拿到真实 IP 后建立连接。因此：
+
+```bash
+nslookup baidu.com
+# 也会返回 198.18.x.x（FakeIP 阶段）
+# 但实际访问时 sing-box 会用真实 IP 直连，不影响正常使用
+```
+
+### 常见问题
+
+**Q: ping 国外网站超时是否正常？**
+A: 正常。FakeIP 模式下 ICMP 流量被 sing-box reject（代理节点通常不支持 ICMP），ping 超时不代表网络不通。用浏览器访问验证即可。
+
+**Q: 系统代理模式下 nslookup 返回真实 IP？**
+A: 系统代理模式默认不开启 FakeIP，DNS 解析走系统原生路径。如需开启，在设置 → DNS 配置中启用 FakeIP。
+
+**Q: 某些应用连不上，怀疑 FakeIP 干扰？**
+A: 在自定义路由规则中为该域名添加规则并勾选「绕过 FakeIP」，该域名将使用真实 DNS 解析。银行/证券类域名已内置绕过。
+
+---
+
 ## 📱 应用分流详解
 
 应用分流可以为特定应用（如 YouTube、Telegram、币安等）单独指定流量走向，不受全局代理模式的影响。
