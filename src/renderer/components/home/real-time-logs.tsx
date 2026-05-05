@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,22 +9,36 @@ import { getLogs, clearLogs, addEventListener, removeEventListener } from '@/bri
 import type { LogEntry } from '@/bridge/types';
 import { useTranslation } from 'react-i18next';
 
+// 优化：减少内存占用的常量
+const MAX_LOGS_IN_MEMORY = 50; // 减少内存中保存的日志数量
+const MAX_SEARCH_LOGS = 200; // 搜索时最多保留的日志数量
+const SCROLL_DEBOUNCE_MS = 200; // 增加滚动防抖时间
+const LOG_CLEANUP_INTERVAL = 30000; // 30秒清理一次过期日志
+
 export function RealTimeLogs() {
   const { t } = useTranslation();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchSnapshot, setSearchSnapshot] = useState<LogEntry[] | null>(null);
-  const [isAutoScroll, setIsAutoScroll] = useState(false); // 默认不自动滚动
+  const [isAutoScroll, setIsAutoScroll] = useState(false);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const userScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const cleanupIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const connectionStatus = useAppStore((state) => state.connectionStatus);
+
+  // 优化：使用 useMemo 缓存日志处理逻辑
+  const processedLogs = useMemo(() => {
+    // 限制内存中的日志数量
+    const recentLogs = logs.slice(-MAX_LOGS_IN_MEMORY);
+    return recentLogs;
+  }, [logs]);
 
   // Load initial logs and set up real-time updates
   useEffect(() => {
     const loadInitialLogs = async () => {
       try {
-        const response = await getLogs(50);
+        const response = await getLogs(30); // 减少初始加载的日志数量
         if (response && response.success && response.data) {
           setLogs(response.data);
         }
@@ -33,24 +47,41 @@ export function RealTimeLogs() {
       }
     };
 
-    // Load initial logs
     loadInitialLogs();
 
-    // Set up real-time log listener
+    // Set up real-time log listener with memory optimization
     const handleLogReceived = (logEntry: LogEntry) => {
       setLogs((prev) => {
         const updated = [...prev, logEntry];
-        // Keep only last 100 logs
-        return updated.slice(-100);
+        // 更严格的内存控制：保持更少的日志
+        return updated.slice(-MAX_LOGS_IN_MEMORY);
       });
     };
 
     addEventListener('logReceived', handleLogReceived);
 
+    // 设置定期清理定时器
+    cleanupIntervalRef.current = setInterval(() => {
+      setLogs((prev) => {
+        if (prev.length > MAX_LOGS_IN_MEMORY) {
+          return prev.slice(-MAX_LOGS_IN_MEMORY);
+        }
+        return prev;
+      });
+
+      // 清理搜索快照以释放内存
+      if (searchSnapshot && searchSnapshot.length > MAX_SEARCH_LOGS) {
+        setSearchSnapshot((prev) => (prev ? prev.slice(-MAX_SEARCH_LOGS) : null));
+      }
+    }, LOG_CLEANUP_INTERVAL);
+
     return () => {
       removeEventListener('logReceived', handleLogReceived);
+      if (cleanupIntervalRef.current) {
+        clearInterval(cleanupIntervalRef.current);
+      }
     };
-  }, []);
+  }, [searchSnapshot]);
 
   // 获取滚动元素
   const getScrollElement = useCallback(() => {
@@ -61,31 +92,27 @@ export function RealTimeLogs() {
 
   // 检查是否在底部
   const checkIsAtBottom = useCallback((element: HTMLElement) => {
-    const threshold = 30; // 距离底部30px以内认为在底部
+    const threshold = 30;
     return element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
   }, []);
 
-  // 监听滚动事件
+  // 优化：增加滚动防抖时间以减少频繁更新
   useEffect(() => {
     const scrollElement = getScrollElement();
     if (!scrollElement) return;
 
     const handleScroll = () => {
-      // 标记用户正在滚动
       setIsUserScrolling(true);
 
-      // 清除之前的超时
       if (userScrollTimeoutRef.current) {
         clearTimeout(userScrollTimeoutRef.current);
       }
 
-      // 设置超时，滚动停止后更新状态
       userScrollTimeoutRef.current = setTimeout(() => {
         setIsUserScrolling(false);
-        // 检查是否滚动到底部
         const atBottom = checkIsAtBottom(scrollElement);
         setIsAutoScroll(atBottom);
-      }, 150);
+      }, SCROLL_DEBOUNCE_MS); // 使用更长的防抖时间
     };
 
     scrollElement.addEventListener('scroll', handleScroll, { passive: true });
@@ -106,22 +133,23 @@ export function RealTimeLogs() {
         scrollElement.scrollTop = scrollElement.scrollHeight;
       }
     }
-  }, [logs, isAutoScroll, isUserScrolling, getScrollElement]);
+  }, [processedLogs, isAutoScroll, isUserScrolling, getScrollElement]);
 
   const handleClearLogs = async () => {
     try {
       const success = await clearLogs();
       if (success) {
         setLogs([]);
+        setSearchSnapshot(null); // 清理搜索快照
       }
     } catch (error) {
       console.error('Failed to clear logs:', error);
-      // Clear local logs anyway
       setLogs([]);
+      setSearchSnapshot(null);
     }
   };
 
-  const getLevelColor = (level: LogEntry['level']) => {
+  const getLevelColor = useCallback((level: LogEntry['level']) => {
     switch (level) {
       case 'error':
         return 'text-red-500';
@@ -134,52 +162,64 @@ export function RealTimeLogs() {
       default:
         return 'text-foreground';
     }
-  };
+  }, []);
 
-  const handleSearchChange = (value: string) => {
-    const prev = searchTerm;
-    setSearchTerm(value);
-    if (value && !prev) {
-      // 开始搜索时保存当前日志快照
-      setSearchSnapshot(logs);
-    } else if (!value && prev) {
-      // 清除搜索时丢弃快照
-      setSearchSnapshot(null);
-    }
-  };
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      const prev = searchTerm;
+      setSearchTerm(value);
+      if (value && !prev) {
+        // 开始搜索时保存当前日志快照，但限制数量
+        setSearchSnapshot(processedLogs.slice(-MAX_SEARCH_LOGS));
+      } else if (!value && prev) {
+        // 清除搜索时丢弃快照
+        setSearchSnapshot(null);
+      }
+    },
+    [searchTerm, processedLogs]
+  );
 
-  // 搜索时使用快照+新日志的合集，确保不丢失数据
-  const searchBase = searchSnapshot
-    ? (() => {
-        const snapshotTimestamps = new Set(searchSnapshot.map((l) => l.timestamp + l.message));
-        const newLogs = logs.filter((l) => !snapshotTimestamps.has(l.timestamp + l.message));
-        return [...searchSnapshot, ...newLogs];
-      })()
-    : logs;
+  // 优化：使用 useMemo 缓存搜索结果
+  const { searchBase, filteredLogs } = useMemo(() => {
+    const base = searchSnapshot
+      ? (() => {
+          const snapshotTimestamps = new Set(searchSnapshot.map((l) => l.timestamp + l.message));
+          const newLogs = processedLogs.filter(
+            (l) => !snapshotTimestamps.has(l.timestamp + l.message)
+          );
+          return [...searchSnapshot, ...newLogs].slice(-MAX_SEARCH_LOGS); // 限制搜索基础数据量
+        })()
+      : processedLogs;
 
-  const filteredLogs = searchTerm
-    ? searchBase.filter(
-        (log) =>
-          log.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          log.level.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (log.category === 'route' && 'route'.includes(searchTerm.toLowerCase()))
-      )
-    : logs;
+    const filtered = searchTerm
+      ? base.filter(
+          (log) =>
+            log.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            log.level.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (log.category === 'route' && 'route'.includes(searchTerm.toLowerCase()))
+        )
+      : processedLogs; // 非搜索状态使用处理后的日志
 
-  const highlightMatch = (text: string) => {
-    if (!searchTerm) return text;
-    const idx = text.toLowerCase().indexOf(searchTerm.toLowerCase());
-    if (idx === -1) return text;
-    return (
-      <>
-        {text.slice(0, idx)}
-        <span className="bg-yellow-300/60 dark:bg-yellow-500/40 rounded px-0.5">
-          {text.slice(idx, idx + searchTerm.length)}
-        </span>
-        {text.slice(idx + searchTerm.length)}
-      </>
-    );
-  };
+    return { searchBase: base, filteredLogs: filtered };
+  }, [searchSnapshot, processedLogs, searchTerm]);
+
+  const highlightMatch = useCallback(
+    (text: string) => {
+      if (!searchTerm) return text;
+      const idx = text.toLowerCase().indexOf(searchTerm.toLowerCase());
+      if (idx === -1) return text;
+      return (
+        <>
+          {text.slice(0, idx)}
+          <span className="bg-yellow-300/60 dark:bg-yellow-500/40 rounded px-0.5">
+            {text.slice(idx, idx + searchTerm.length)}
+          </span>
+          {text.slice(idx + searchTerm.length)}
+        </>
+      );
+    },
+    [searchTerm]
+  );
 
   return (
     <Card>
@@ -205,7 +245,7 @@ export function RealTimeLogs() {
               variant="outline"
               size="sm"
               onClick={handleClearLogs}
-              disabled={logs.length === 0}
+              disabled={processedLogs.length === 0}
             >
               <Trash2 className="h-4 w-4 mr-1" />
               {t('home.clear')}
@@ -217,7 +257,7 @@ export function RealTimeLogs() {
         <ScrollArea ref={scrollAreaRef} className="h-64 w-full rounded border bg-muted/30 p-3">
           {filteredLogs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              {logs.length > 0 && searchTerm
+              {processedLogs.length > 0 && searchTerm
                 ? t('home.noLogsMatch')
                 : connectionStatus?.proxyCore?.running
                   ? t('home.waitingForLogs')
@@ -231,7 +271,7 @@ export function RealTimeLogs() {
 
                 return (
                   <div
-                    key={index}
+                    key={`${log.timestamp}-${index}`} // 优化：使用更稳定的 key
                     className={`text-xs font-mono select-text flex items-start gap-1 ${
                       isRoute
                         ? 'border-l-2 border-emerald-500/70 pl-2 bg-emerald-500/5 rounded-r-sm py-0.5'
@@ -258,6 +298,9 @@ export function RealTimeLogs() {
         <div className="mt-2 flex items-center justify-between">
           <span className="text-xs text-muted-foreground">
             {isAutoScroll ? t('home.autoScrollOn') : t('home.autoScrollOff')}
+            {processedLogs.length >= MAX_LOGS_IN_MEMORY && (
+              <span className="ml-2 text-yellow-600">(显示最近 {MAX_LOGS_IN_MEMORY} 条)</span>
+            )}
           </span>
           {!isAutoScroll && (
             <Button

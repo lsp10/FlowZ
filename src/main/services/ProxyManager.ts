@@ -331,6 +331,8 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   private lastLogFileSize: number = 0;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly HEALTH_CHECK_INTERVAL = 10000; // 10秒检查一次
+  private static readonly LIGHTWEIGHT_HEALTH_CHECK_INTERVAL = 30000; // 轻量模式下30秒检查一次
+  private isLightweightMode = false;
 
   // 自动重启相关
   private autoRestartEnabled: boolean = true;
@@ -3253,11 +3255,15 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       return;
     }
 
+    const interval = this.isLightweightMode
+      ? ProxyManager.LIGHTWEIGHT_HEALTH_CHECK_INTERVAL
+      : ProxyManager.HEALTH_CHECK_INTERVAL;
+
     this.healthCheckTimer = setInterval(() => {
       this.performHealthCheck();
-    }, ProxyManager.HEALTH_CHECK_INTERVAL);
+    }, interval);
 
-    this.logToManager('debug', '已启动进程健康检查');
+    this.logToManager('debug', `已启动进程健康检查 (间隔: ${interval}ms)`);
   }
 
   /**
@@ -3415,6 +3421,48 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   setAutoRestartEnabled(enabled: boolean): void {
     this.autoRestartEnabled = enabled;
     this.logToManager('info', `自动重启已${enabled ? '启用' : '禁用'}`);
+  }
+
+  /**
+   * 进入轻量模式
+   */
+  enterLightweightMode(): void {
+    this.isLightweightMode = true;
+
+    // 重启健康检查以使用更长的间隔
+    if (this.healthCheckTimer) {
+      this.stopHealthCheck();
+      this.startHealthCheck();
+    }
+
+    // 重启日志文件监控以使用更长的间隔
+    if (this.logFileWatcher) {
+      this.stopLogFileWatcher();
+      this.startLogFileWatcher();
+    }
+
+    this.logToManager('info', '代理管理器已进入轻量模式');
+  }
+
+  /**
+   * 退出轻量模式
+   */
+  exitLightweightMode(): void {
+    this.isLightweightMode = false;
+
+    // 重启健康检查以使用正常间隔
+    if (this.healthCheckTimer) {
+      this.stopHealthCheck();
+      this.startHealthCheck();
+    }
+
+    // 重启日志文件监控以使用正常间隔
+    if (this.logFileWatcher) {
+      this.stopLogFileWatcher();
+      this.startLogFileWatcher();
+    }
+
+    this.logToManager('info', '代理管理器已退出轻量模式');
   }
 
   /**
@@ -3595,7 +3643,9 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       // 忽略错误
     }
 
-    // 每 500ms 检查一次日志文件
+    // 轻量模式下降低监控频率
+    const interval = this.isLightweightMode ? 2000 : 500; // 轻量模式2秒，正常模式500ms
+
     this.logFileWatcher = setInterval(async () => {
       try {
         const stats = await fs.stat(logFilePath);
@@ -3617,7 +3667,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       } catch {
         // 文件可能还不存在，忽略错误
       }
-    }, 500);
+    }, interval);
   }
 
   /**

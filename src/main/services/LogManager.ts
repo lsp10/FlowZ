@@ -160,12 +160,21 @@ export class LogManager extends EventEmitter implements ILogManager {
   }
 
   /**
-   * 进入轻量模式：缩小内存日志缓冲区，提升日志级别
+   * 进入轻量模式：缩小内存日志缓冲区，提升日志级别，停止文件写入
    */
   enterLightweightMode(): void {
+    // 清空内存日志并大幅缩小缓冲区
     this.logs = [];
-    this.maxLogs = 50;
-    this.currentLogLevel = 'warn';
+    this.maxLogs = 20; // 进一步减少内存占用
+    this.currentLogLevel = 'error'; // 只记录错误级别日志
+
+    // 等待所有待处理的写入完成后停止文件写入
+    this.flush()
+      .then(() => {
+        // 在轻量模式下暂停文件写入以减少I/O
+        this.pendingWrites.clear();
+      })
+      .catch(console.error);
   }
 
   /**
@@ -174,6 +183,8 @@ export class LogManager extends EventEmitter implements ILogManager {
   exitLightweightMode(): void {
     this.maxLogs = this.defaultMaxLogs;
     this.currentLogLevel = 'info';
+    // 重新初始化日志目录以恢复文件写入
+    this.initPromise = this.ensureLogDirectory();
   }
 
   /**

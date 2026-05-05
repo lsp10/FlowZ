@@ -1,8 +1,10 @@
 /**
  * Zustand store for application state management
+ * 优化版本：减少不必要的重新渲染和内存占用
  */
 
 import { create } from 'zustand';
+import { subscribeWithSelector } from 'zustand/middleware';
 import type { UserConfig, DomainRule, TrafficStats } from '../../shared/types';
 import { api } from '../ipc';
 
@@ -76,361 +78,432 @@ interface AppState {
   deleteCustomRule: (ruleId: string) => Promise<void>;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
-  // Initial State
-  currentView: 'home',
-  isLoading: false,
-  error: null,
-  connectionStatus: null,
-  config: null,
-  stats: null,
-  latencyMap: {},
-  isPrivacyMode: false,
+// 优化：深度比较函数，避免不必要的状态更新
+const deepEqual = (a: any, b: any): boolean => {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== typeof b) return false;
 
-  // UI Actions
-  setCurrentView: (view) => set({ currentView: view }),
-  setLoading: (loading) => set({ isLoading: loading }),
-  setError: (error) => set({ error }),
-  setLatencyMap: (map) => set({ latencyMap: map }),
-  setPrivacyMode: async (value) => {
-    if (get().isPrivacyMode === value) return;
-    set({ isPrivacyMode: value });
-    try {
-      await api.config.setPrivacyMode(value);
-    } catch (error) {
-      console.error('Failed to sync privacy mode to main process:', error);
-    }
-  },
+  if (typeof a === 'object') {
+    const keysA = Object.keys(a);
+    const keysB = Object.keys(b);
+    if (keysA.length !== keysB.length) return false;
 
-  // Proxy Control Actions
-  startProxy: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      // 获取当前配置
-      const currentConfig = get().config;
-      if (!currentConfig) {
-        throw new Error('配置未加载');
+    for (const key of keysA) {
+      if (!keysB.includes(key) || !deepEqual(a[key], b[key])) {
+        return false;
       }
+    }
+    return true;
+  }
 
-      // 直接启动代理，ProxyManager 会在需要时通过 osascript 请求管理员权限
-      // 不再预先检查权限，因为 sing-box 进程会在 TUN 模式下自动请求权限
-      const isTunMode = currentConfig.proxyModeType?.toLowerCase() === 'tun';
-      console.log(
-        '[StartProxy] proxyModeType:',
-        currentConfig.proxyModeType,
-        'isTunMode:',
-        isTunMode
-      );
+  return false;
+};
 
-      if (isTunMode) {
+// 优化：防抖函数，减少频繁的状态更新
+const debounce = <T extends (...args: any[]) => any>(
+  func: T,
+  wait: number
+): ((...args: Parameters<T>) => void) => {
+  let timeout: NodeJS.Timeout;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  };
+};
+
+export const useAppStore = create<AppState>()(
+  subscribeWithSelector((set, get) => ({
+    // Initial State
+    currentView: 'home',
+    isLoading: false,
+    error: null,
+    connectionStatus: null,
+    config: null,
+    stats: null,
+    latencyMap: {},
+    isPrivacyMode: false,
+
+    // UI Actions - 优化：只在值真正改变时更新
+    setCurrentView: (view) => {
+      const current = get().currentView;
+      if (current !== view) {
+        set({ currentView: view });
+      }
+    },
+
+    setLoading: (loading) => {
+      const current = get().isLoading;
+      if (current !== loading) {
+        set({ isLoading: loading });
+      }
+    },
+
+    setError: (error) => {
+      const current = get().error;
+      if (current !== error) {
+        set({ error });
+      }
+    },
+
+    setLatencyMap: (map) => {
+      const current = get().latencyMap;
+      if (!deepEqual(current, map)) {
+        set({ latencyMap: { ...map } }); // 创建新对象以确保引用更新
+      }
+    },
+
+    setPrivacyMode: async (value) => {
+      const current = get().isPrivacyMode;
+      if (current === value) return;
+
+      set({ isPrivacyMode: value });
+      try {
+        await api.config.setPrivacyMode(value);
+      } catch (error) {
+        console.error('Failed to sync privacy mode to main process:', error);
+        // 回滚状态
+        set({ isPrivacyMode: current });
+      }
+    },
+
+    // Proxy Control Actions
+    startProxy: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        // 获取当前配置
+        const currentConfig = get().config;
+        if (!currentConfig) {
+          throw new Error('配置未加载');
+        }
+
+        // 直接启动代理，ProxyManager 会在需要时通过 osascript 请求管理员权限
+        // 不再预先检查权限，因为 sing-box 进程会在 TUN 模式下自动请求权限
+        const isTunMode = currentConfig.proxyModeType?.toLowerCase() === 'tun';
         console.log(
-          '[StartProxy] TUN mode detected, sing-box will request admin privileges when needed'
+          '[StartProxy] proxyModeType:',
+          currentConfig.proxyModeType,
+          'isTunMode:',
+          isTunMode
         );
-      }
 
-      await api.proxy.start(currentConfig);
-      // 启动成功后不立即设置 isLoading = false，而是等待状态轮询完成
+        if (isTunMode) {
+          console.log(
+            '[StartProxy] TUN mode detected, sing-box will request admin privileges when needed'
+          );
+        }
 
-      // Poll connection status until connected or timeout
-      const maxAttempts = 20; // 10 seconds (20 * 500ms)
-      let attempts = 0;
+        await api.proxy.start(currentConfig);
+        // 启动成功后不立即设置 isLoading = false，而是等待状态轮询完成
 
-      const pollStatus = async (): Promise<void> => {
-        attempts++;
-        await get().refreshConnectionStatus();
+        // Poll connection status until connected or timeout
+        const maxAttempts = 20; // 10 seconds (20 * 500ms)
+        let attempts = 0;
 
-        const status = get().connectionStatus;
-
-        // Debug logging
-        console.log(`[StartProxy] Polling attempt ${attempts}:`, {
-          proxyCoreRunning: status?.proxyCore?.running,
-          proxyEnabled: status?.proxy?.enabled,
-          proxyCoreError: status?.proxyCore?.error,
-          proxyCorePid: status?.proxyCore?.pid,
-        });
-
-        // Check if connected based on proxy mode type
-        const isTunMode = status?.proxyModeType === 'tun';
-        const isConnected = isTunMode
-          ? status?.proxyCore?.running // TUN mode: only check if proxy core is running
-          : status?.proxyCore?.running && status?.proxy?.enabled; // System proxy mode: check both
-
-        if (isConnected) {
-          console.log('[StartProxy] Connection successful!', { mode: status?.proxyModeType });
-          // Ensure final status update before completing
+        const pollStatus = async (): Promise<void> => {
+          attempts++;
           await get().refreshConnectionStatus();
-          set({ isLoading: false });
-          return;
-        }
 
-        // Check for proxy core errors
-        if (status?.proxyCore?.error) {
-          console.log('[StartProxy] Proxy core error detected:', status.proxyCore.error);
-          set({
-            error: status.proxyCore.error,
-            isLoading: false,
+          const status = get().connectionStatus;
+
+          // Debug logging
+          console.log(`[StartProxy] Polling attempt ${attempts}:`, {
+            proxyCoreRunning: status?.proxyCore?.running,
+            proxyEnabled: status?.proxy?.enabled,
+            proxyCoreError: status?.proxyCore?.error,
+            proxyCorePid: status?.proxyCore?.pid,
           });
-          return;
-        }
 
-        // Check if proxy core failed to start (not running and no error means startup failed)
-        if (attempts > 3 && !status?.proxyCore?.running) {
-          console.log('[StartProxy] Proxy core failed to start');
-          set({
-            error: 'sing-box 启动失败：进程无法正常启动，请检查服务器配置',
-            isLoading: false,
-          });
-          return;
-        }
+          // Check if connected based on proxy mode type
+          const isTunMode = status?.proxyModeType === 'tun';
+          const isConnected = isTunMode
+            ? status?.proxyCore?.running // TUN mode: only check if proxy core is running
+            : status?.proxyCore?.running && status?.proxy?.enabled; // System proxy mode: check both
 
-        // Check timeout
-        if (attempts >= maxAttempts) {
-          console.log('[StartProxy] Connection timeout');
-          set({
-            error: '连接超时：无法在预期时间内建立连接，请检查服务器配置',
-            isLoading: false,
-          });
-          return;
-        }
+          if (isConnected) {
+            console.log('[StartProxy] Connection successful!', { mode: status?.proxyModeType });
+            // Ensure final status update before completing
+            await get().refreshConnectionStatus();
+            set({ isLoading: false });
+            return;
+          }
 
-        // Continue polling
-        setTimeout(pollStatus, 500);
-      };
+          // Check for proxy core errors
+          if (status?.proxyCore?.error) {
+            console.log('[StartProxy] Proxy core error detected:', status.proxyCore.error);
+            set({
+              error: status.proxyCore.error,
+              isLoading: false,
+            });
+            return;
+          }
 
-      // Start polling immediately
-      await pollStatus();
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      // Refresh status to ensure UI reflects actual state
-      await get().refreshConnectionStatus();
-    }
-  },
+          // Check if proxy core failed to start (not running and no error means startup failed)
+          if (attempts > 3 && !status?.proxyCore?.running) {
+            console.log('[StartProxy] Proxy core failed to start');
+            set({
+              error: 'sing-box 启动失败：进程无法正常启动，请检查服务器配置',
+              isLoading: false,
+            });
+            return;
+          }
 
-  stopProxy: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.proxy.stop();
-      // Refresh status after stopping
-      await get().refreshConnectionStatus();
-    } catch (error) {
-      set({ error: String(error) });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+          // Check timeout
+          if (attempts >= maxAttempts) {
+            console.log('[StartProxy] Connection timeout');
+            set({
+              error: '连接超时：无法在预期时间内建立连接，请检查服务器配置',
+              isLoading: false,
+            });
+            return;
+          }
 
-  // Configuration Actions
-  loadConfig: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      console.log('[Store] Loading config...');
-      const config = await api.config.get();
-      console.log('[Store] Config loaded successfully:', config);
-
-      // 确保有默认的TUN配置
-      if (!config.tunConfig) {
-        config.tunConfig = {
-          mtu: 9000,
-          stack: 'system',
-          autoRoute: true,
-          strictRoute: true,
+          // Continue polling
+          setTimeout(pollStatus, 500);
         };
+
+        // Start polling immediately
+        await pollStatus();
+      } catch (error) {
+        set({ error: String(error), isLoading: false });
+        // Refresh status to ensure UI reflects actual state
+        await get().refreshConnectionStatus();
       }
+    },
 
-      // 确保有默认的代理模式类型
-      if (!config.proxyModeType) {
-        config.proxyModeType = 'systemProxy';
+    stopProxy: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.proxy.stop();
+        // Refresh status after stopping
+        await get().refreshConnectionStatus();
+      } catch (error) {
+        set({ error: String(error) });
+      } finally {
+        set({ isLoading: false });
       }
+    },
 
-      const isPrivacyMode = await api.config.getPrivacyMode();
-      set({ config, isPrivacyMode });
-    } catch (error) {
-      console.error('[Store] Exception loading config:', error);
-      set({ error: String(error) });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    // Configuration Actions
+    loadConfig: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        console.log('[Store] Loading config...');
+        const config = await api.config.get();
+        console.log('[Store] Config loaded successfully:', config);
 
-  saveConfig: async (config) => {
-    set({ isLoading: true, error: null });
-    try {
-      console.log('[Store] Saving config:', config);
-      await api.config.save(config);
-      console.log('[Store] Config saved successfully');
-      set({ config });
-    } catch (error) {
-      console.error('[Store] Exception saving config:', error);
-      set({ error: String(error) });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+        // 确保有默认的TUN配置
+        if (!config.tunConfig) {
+          config.tunConfig = {
+            mtu: 9000,
+            stack: 'system',
+            autoRoute: true,
+            strictRoute: true,
+          };
+        }
 
-  updateProxyMode: async (mode) => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.config.updateMode(mode);
-      // Update local config
-      const currentConfig = get().config;
-      if (currentConfig) {
-        set({ config: { ...currentConfig, proxyMode: mode } });
+        // 确保有默认的代理模式类型
+        if (!config.proxyModeType) {
+          config.proxyModeType = 'systemProxy';
+        }
+
+        const isPrivacyMode = await api.config.getPrivacyMode();
+
+        // 优化：只在配置真正改变时更新
+        const currentConfig = get().config;
+        const currentPrivacyMode = get().isPrivacyMode;
+
+        if (!deepEqual(currentConfig, config) || currentPrivacyMode !== isPrivacyMode) {
+          set({ config, isPrivacyMode });
+        }
+      } catch (error) {
+        console.error('[Store] Exception loading config:', error);
+        set({ error: String(error) });
+      } finally {
+        set({ isLoading: false });
       }
-    } catch (error) {
-      set({ error: String(error) });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    },
 
-  switchServer: async (serverId) => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.server.switch(serverId);
-      // Update local config
-      const currentConfig = get().config;
-      if (currentConfig) {
-        set({ config: { ...currentConfig, selectedServerId: serverId } });
+    saveConfig: async (config) => {
+      set({ isLoading: true, error: null });
+      try {
+        console.log('[Store] Saving config:', config);
+        await api.config.save(config);
+        console.log('[Store] Config saved successfully');
+        set({ config });
+      } catch (error) {
+        console.error('[Store] Exception saving config:', error);
+        set({ error: String(error) });
+        throw error;
+      } finally {
+        set({ isLoading: false });
       }
-      // Refresh connection status
-      await get().refreshConnectionStatus();
-    } catch (error) {
-      set({ error: String(error) });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    },
 
-  // Status Actions
-  refreshConnectionStatus: async () => {
-    try {
-      const proxyStatus = await api.proxy.getStatus();
-      // 将 ProxyStatus 转换为 ConnectionStatus
-      const connectionStatus: ConnectionStatus = {
-        proxyCore: {
-          running: proxyStatus.running,
-          pid: proxyStatus.pid,
-          uptime: proxyStatus.uptime,
-          error: proxyStatus.error,
-        },
-        proxy: {
-          enabled: proxyStatus.running,
-          server: proxyStatus.currentServer?.name,
-        },
-        proxyModeType: get().config?.proxyModeType || 'systemProxy',
-      };
-      set({ connectionStatus });
-    } catch (error) {
-      console.error('Failed to refresh connection status:', error);
-    }
-  },
+    updateProxyMode: async (mode) => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.config.updateMode(mode);
+        // Update local config
+        const currentConfig = get().config;
+        if (currentConfig) {
+          set({ config: { ...currentConfig, proxyMode: mode } });
+        }
+      } catch (error) {
+        set({ error: String(error) });
+      } finally {
+        set({ isLoading: false });
+      }
+    },
 
-  refreshStatistics: async () => {
-    try {
-      const stats = await api.stats.get();
-      set({ stats });
-    } catch (error) {
-      console.error('Failed to refresh statistics:', error);
-    }
-  },
+    switchServer: async (serverId) => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.server.switch(serverId);
+        // Update local config
+        const currentConfig = get().config;
+        if (currentConfig) {
+          set({ config: { ...currentConfig, selectedServerId: serverId } });
+        }
+        // Refresh connection status
+        await get().refreshConnectionStatus();
+      } catch (error) {
+        set({ error: String(error) });
+        throw error;
+      } finally {
+        set({ isLoading: false });
+      }
+    },
 
-  resetStatistics: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.stats.reset();
-      set({
-        stats: {
-          uploadSpeed: 0,
-          downloadSpeed: 0,
-          totalUpload: 0,
-          totalDownload: 0,
-        },
-      });
-    } catch (error) {
-      set({ error: String(error) });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    // Status Actions
+    refreshConnectionStatus: async () => {
+      try {
+        const proxyStatus = await api.proxy.getStatus();
+        // 将 ProxyStatus 转换为 ConnectionStatus
+        const connectionStatus: ConnectionStatus = {
+          proxyCore: {
+            running: proxyStatus.running,
+            pid: proxyStatus.pid,
+            uptime: proxyStatus.uptime,
+            error: proxyStatus.error,
+          },
+          proxy: {
+            enabled: proxyStatus.running,
+            server: proxyStatus.currentServer?.name,
+          },
+          proxyModeType: get().config?.proxyModeType || 'systemProxy',
+        };
+        set({ connectionStatus });
+      } catch (error) {
+        console.error('Failed to refresh connection status:', error);
+      }
+    },
 
-  // Server Management Actions
-  deleteServer: async (serverId) => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.server.delete(serverId);
-      // Reload config to get updated server list
-      await get().loadConfig();
-    } catch (error) {
-      set({ error: String(error) });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    refreshStatistics: async () => {
+      try {
+        const stats = await api.stats.get();
+        set({ stats });
+      } catch (error) {
+        console.error('Failed to refresh statistics:', error);
+      }
+    },
 
-  // Custom Rules Actions
-  addCustomRule: async (rule) => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.rules.add(rule);
-      // Reload config to get updated rules
-      await get().loadConfig();
-    } catch (error) {
-      set({ error: String(error) });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    resetStatistics: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.stats.reset();
+        set({
+          stats: {
+            uploadSpeed: 0,
+            downloadSpeed: 0,
+            totalUpload: 0,
+            totalDownload: 0,
+          },
+        });
+      } catch (error) {
+        set({ error: String(error) });
+      } finally {
+        set({ isLoading: false });
+      }
+    },
 
-  updateCustomRule: async (rule) => {
-    console.log('[Store] updateCustomRule called with:', rule);
-    set({ isLoading: true, error: null });
-    try {
-      console.log('[Store] Calling api.rules.update...');
-      await api.rules.update(rule);
-      console.log('[Store] Rule updated successfully, reloading config...');
-      // Reload config to get updated rules
-      await get().loadConfig();
-      console.log('[Store] Config reloaded after rule update');
-    } catch (error) {
-      console.error('[Store] Exception in updateCustomRule:', error);
-      set({ error: String(error) });
-      throw error;
-    } finally {
-      console.log('[Store] updateCustomRule completed, setting isLoading to false');
-      set({ isLoading: false });
-    }
-  },
-
-  deleteCustomRule: async (ruleId) => {
-    set({ isLoading: true, error: null });
-    try {
-      await api.rules.delete(ruleId);
-      // Reload config to get updated rules
-      await get().loadConfig();
-    } catch (error) {
-      set({ error: String(error) });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
-
-  setConfigValue: async (key, value) => {
-    try {
-      await api.config.setValue(key, value);
-      // Update local state immediately for better UX
-      const currentConfig = get().config;
-      if (currentConfig) {
-        set({ config: { ...currentConfig, [key]: value } });
-      } else {
+    // Server Management Actions
+    deleteServer: async (serverId) => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.server.delete(serverId);
+        // Reload config to get updated server list
         await get().loadConfig();
+      } catch (error) {
+        set({ error: String(error) });
+        throw error;
+      } finally {
+        set({ isLoading: false });
       }
-    } catch (error) {
-      console.error(`[Store] Failed to set config value for ${String(key)}:`, error);
-      set({ error: String(error) });
-    }
-  },
-}));
+    },
+
+    // Custom Rules Actions
+    addCustomRule: async (rule) => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.rules.add(rule);
+        // Reload config to get updated rules
+        await get().loadConfig();
+      } catch (error) {
+        set({ error: String(error) });
+        throw error;
+      } finally {
+        set({ isLoading: false });
+      }
+    },
+
+    updateCustomRule: async (rule) => {
+      console.log('[Store] updateCustomRule called with:', rule);
+      set({ isLoading: true, error: null });
+      try {
+        console.log('[Store] Calling api.rules.update...');
+        await api.rules.update(rule);
+        console.log('[Store] Rule updated successfully, reloading config...');
+        // Reload config to get updated rules
+        await get().loadConfig();
+        console.log('[Store] Config reloaded after rule update');
+      } catch (error) {
+        console.error('[Store] Exception in updateCustomRule:', error);
+        set({ error: String(error) });
+        throw error;
+      } finally {
+        console.log('[Store] updateCustomRule completed, setting isLoading to false');
+        set({ isLoading: false });
+      }
+    },
+
+    deleteCustomRule: async (ruleId) => {
+      set({ isLoading: true, error: null });
+      try {
+        await api.rules.delete(ruleId);
+        // Reload config to get updated rules
+        await get().loadConfig();
+      } catch (error) {
+        set({ error: String(error) });
+      } finally {
+        set({ isLoading: false });
+      }
+    },
+
+    setConfigValue: async (key, value) => {
+      try {
+        await api.config.setValue(key, value);
+        // Update local state immediately for better UX
+        const currentConfig = get().config;
+        if (currentConfig) {
+          set({ config: { ...currentConfig, [key]: value } });
+        } else {
+          await get().loadConfig();
+        }
+      } catch (error) {
+        console.error(`[Store] Failed to set config value for ${String(key)}:`, error);
+        set({ error: String(error) });
+      }
+    },
+  }))
+);

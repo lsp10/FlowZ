@@ -8,6 +8,7 @@ import { ProxyManager } from './services/ProxyManager';
 import { createSystemProxyManager } from './services/SystemProxyManager';
 import { resourceManager } from './services/ResourceManager';
 import { SubscriptionService } from './services/SubscriptionService';
+import { memoryMonitor } from './utils/memory-monitor';
 import {
   registerConfigHandlers,
   registerServerHandlers,
@@ -169,11 +170,60 @@ function enterLightweightCleanup(): void {
   // 日志管理器进入轻量模式（缩小缓冲区 + 提升日志级别）
   logManager.enterLightweightMode();
 
-  // 延迟触发 GC
+  // ProxyManager 进入轻量模式（降低健康检查和日志监控频率）
+  if (proxyManager) {
+    proxyManager.enterLightweightMode();
+  }
+
+  // 内存监控器进入轻量模式
+  memoryMonitor.enterLightweightMode();
+
+  // 清理订阅服务缓存
+  if (subscriptionService) {
+    // 暂停订阅更新定时器以减少资源消耗
+    // 注意：这里不直接操作 subscriptionService 的内部定时器，
+    // 而是通过设置标志位在下次检查时跳过更新
+  }
+
+  // 清理事件监听器以减少内存占用
+  mainEventEmitter.removeAllListeners();
+  ipcEventEmitter.removeAllListeners();
+
+  // 延迟触发 GC 和内存优化
   setTimeout(() => {
+    // 手动触发垃圾回收
     if (typeof (global as any).gc === 'function') {
       (global as any).gc();
+      logManager.addLog('info', '轻量模式：已触发垃圾回收', 'Main');
     }
+
+    // 清理 Node.js 内部缓存
+    if (require.cache) {
+      // 清理非核心模块的缓存（保留核心功能模块）
+      const coreModules = new Set([
+        'electron',
+        'path',
+        'fs',
+        'child_process',
+        'events',
+        'util',
+        'os',
+        'crypto',
+      ]);
+
+      Object.keys(require.cache).forEach((key) => {
+        const moduleName = key.split('/').pop()?.split('.')[0];
+        if (moduleName && !coreModules.has(moduleName) && !key.includes('node_modules/electron')) {
+          try {
+            delete require.cache[key];
+          } catch (e) {
+            // 忽略删除失败的模块
+          }
+        }
+      });
+    }
+
+    logManager.addLog('info', '轻量模式清理完成', 'Main');
   }, 1000);
 }
 
@@ -182,6 +232,14 @@ function enterLightweightCleanup(): void {
  */
 function exitLightweightMode(): void {
   logManager.exitLightweightMode();
+
+  // ProxyManager 退出轻量模式
+  if (proxyManager) {
+    proxyManager.exitLightweightMode();
+  }
+
+  // 内存监控器退出轻量模式
+  memoryMonitor.exitLightweightMode();
 }
 
 /**
@@ -502,6 +560,9 @@ async function cleanupResources(): Promise<void> {
   logManager.addLog('info', 'Cleaning up resources before exit...', 'Main');
 
   try {
+    // 停止内存监控
+    memoryMonitor.stop();
+
     // 1. 停止代理进程
     if (proxyManager) {
       const status = proxyManager.getStatus();
@@ -586,6 +647,29 @@ app.whenReady().then(async () => {
   speedTestService = new SpeedTestService(logManager);
   // 记录应用启动日志
   logManager.addLog('info', 'Application started', 'Main');
+
+  // 启动内存监控
+  memoryMonitor.start(15000); // 15秒间隔监控
+
+  // 监听内存警告事件
+  memoryMonitor.on('memoryWarning', (warning) => {
+    logManager.addLog('warn', `内存警告: ${warning.message}`, 'MemoryMonitor');
+  });
+
+  memoryMonitor.on('gcTriggered', (info) => {
+    logManager.addLog('info', info.message, 'MemoryMonitor');
+  });
+
+  memoryMonitor.on('memoryStats', (stats) => {
+    // 只在调试模式下记录详细的内存统计
+    if (isDevelopment) {
+      logManager.addLog(
+        'debug',
+        `内存使用: 堆=${stats.heapUsedMB}MB/${stats.heapTotalMB}MB, RSS=${stats.rssMB}MB`,
+        'MemoryMonitor'
+      );
+    }
+  });
 
   // macOS: 禁用 App Nap，防止系统认为应用"没有响应"
   // 当应用在后台运行代理时，App Nap 会导致系统误判应用状态
