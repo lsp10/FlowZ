@@ -64,6 +64,55 @@ export class ProtocolParser implements IProtocolParser {
    * 解析协议 URL 为服务器配置
    */
   /**
+   * 预处理非标准 SOCKS5 URL 格式
+   *
+   * 支持以下非标准格式（某些代理服务商使用）：
+   *   socks5://IP:端口:用户名:密码
+   *   socks5://IP:端口:用户名:密码#备注
+   *
+   * 转换为标准格式：
+   *   socks5://用户名:密码@IP:端口#备注
+   */
+  private preprocessSocksUrl(raw: string): string {
+    // 提取 scheme
+    const schemeEnd = raw.indexOf('://');
+    if (schemeEnd === -1) return raw;
+    const scheme = raw.slice(0, schemeEnd);
+    const rest = raw.slice(schemeEnd + 3); // 去掉 "scheme://"
+
+    // 如果已经包含 @ 说明是标准格式，不处理
+    if (rest.includes('@')) return raw;
+
+    // 分离 fragment（#备注）
+    const hashIdx = rest.indexOf('#');
+    const fragment = hashIdx >= 0 ? rest.slice(hashIdx) : '';
+    const hostPart = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+
+    // 按冒号分割，格式为 IP:端口:用户名:密码
+    // 注意 IPv6 地址本身含冒号，但通常会用方括号包裹
+    const parts = hostPart.split(':');
+
+    if (parts.length === 4) {
+      // IP:端口:用户名:密码
+      const [ip, port, username, password] = parts;
+      if (/^\d+$/.test(port)) {
+        return `${scheme}://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${ip}:${port}${fragment}`;
+      }
+    }
+
+    if (parts.length === 3) {
+      // IP:端口:密码（无用户名）
+      const [ip, port, password] = parts;
+      if (/^\d+$/.test(port)) {
+        return `${scheme}://:${encodeURIComponent(password)}@${ip}:${port}${fragment}`;
+      }
+    }
+
+    // 无法识别，原样返回，交给标准 URL 解析器处理
+    return raw;
+  }
+
+  /**
    * 预处理 SS URL，将裸 IPv6 地址（无方括号）转换为标准格式
    * 例: ss://user@2001:db8::1:8388?... → ss://user@[2001:db8::1]:8388?...
    */
@@ -104,6 +153,12 @@ export class ProtocolParser implements IProtocolParser {
       // Preprocess SS URLs to handle bare IPv6 addresses
       if (url.startsWith('ss://')) {
         url = this.preprocessSsUrl(url);
+      }
+
+      // 预处理非标准 SOCKS5 格式: socks5://IP:端口:用户名:密码
+      // 某些代理服务商使用这种格式，需要转换为标准 socks5://用户名:密码@IP:端口
+      if (url.startsWith('socks5://') || url.startsWith('socks://') || url.startsWith('s5://')) {
+        url = this.preprocessSocksUrl(url);
       }
 
       const urlObj = new URL(url);
@@ -749,9 +804,11 @@ export class ProtocolParser implements IProtocolParser {
     const address = this.stripIpv6Brackets(urlObj.hostname);
     const port = parseInt(urlObj.port) || 1080;
     const name = decodeURIComponent(urlObj.hash.slice(1)) || `${address}:${port}`;
-    
-    // Credentials 
-    const credentials = decodeURIComponent(urlObj.username + (urlObj.password ? ':' + urlObj.password : ''));
+
+    // Credentials
+    const credentials = decodeURIComponent(
+      urlObj.username + (urlObj.password ? ':' + urlObj.password : '')
+    );
     const username = urlObj.username ? credentials.split(':')[0] : undefined;
     const password = urlObj.password ? credentials.split(':').slice(1).join(':') : undefined;
 
@@ -779,9 +836,11 @@ export class ProtocolParser implements IProtocolParser {
     const defaultPort = urlObj.protocol.includes('https') ? 443 : 80;
     const port = parseInt(urlObj.port) || defaultPort;
     const name = decodeURIComponent(urlObj.hash.slice(1)) || `${address}:${port}`;
-    
-    // Credentials 
-    const credentials = decodeURIComponent(urlObj.username + (urlObj.password ? ':' + urlObj.password : ''));
+
+    // Credentials
+    const credentials = decodeURIComponent(
+      urlObj.username + (urlObj.password ? ':' + urlObj.password : '')
+    );
     const username = urlObj.username ? credentials.split(':')[0] : undefined;
     const password = urlObj.password ? credentials.split(':').slice(1).join(':') : undefined;
 
@@ -1040,8 +1099,6 @@ export class ProtocolParser implements IProtocolParser {
     const credentials = username || password ? `${username}:${password}@` : '';
     return `${protocolPrefix}${credentials}${config.address}:${config.port}#${name}`;
   }
-
-
 
   /**
    * 生成 VLESS URL

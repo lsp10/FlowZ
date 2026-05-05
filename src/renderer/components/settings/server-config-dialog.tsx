@@ -180,6 +180,21 @@ export function ServerConfigDialog({
                 'Connect to this node through another proxy server (proxy chain)'
               )}
             </p>
+            <div className="rounded-md bg-muted/50 border px-3 py-2 text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground/70">💡 固定出口 IP 配置方法</p>
+              <p>如需让流量从指定 IP 出去（如住宅 IP / 静态 IP）：</p>
+              <ol className="list-decimal list-inside space-y-0.5 pl-1">
+                <li>
+                  先添加一个 <span className="font-mono bg-muted px-1 rounded">SOCKS5</span>{' '}
+                  节点（填入出口 IP 的地址）
+                </li>
+                <li>
+                  再编辑该 SOCKS5 节点，将 <strong>Detour</strong> 设为你的主代理节点
+                </li>
+                <li>在首页选择 SOCKS5 节点作为当前节点</li>
+              </ol>
+              <p className="text-[11px] opacity-70">链路：你 → 主代理 → SOCKS5出口IP → 目标网站</p>
+            </div>
           </div>
 
           <div className="border-t pt-6">

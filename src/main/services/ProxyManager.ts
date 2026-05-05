@@ -814,7 +814,9 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       log: this.generateLogConfig(config),
       dns: this.generateDnsConfig(
         config,
-        idToTagMap.get(config.selectedServerId as string) || 'proxy'
+        // dns-remote 需要指向能直接发出流量的节点（沿 detour 链找到末端）
+        // 例如：SOCKS5出口.detour = VLESS → dns-remote 应走 VLESS，而非 SOCKS5
+        this.resolveEffectiveProxyTag(selectedServer, config.servers, idToTagMap)
       ),
       inbounds: await this.generateInbounds(config),
       outbounds: this.generateOutbounds(selectedServer, config, idToTagMap),
@@ -1248,6 +1250,36 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     }
 
     return inbounds;
+  }
+
+  /**
+   * 解析 dns-remote 应使用的有效代理节点 tag。
+   *
+   * 当主节点配置了 detour（代理链）时，dns-remote 不能直接走主节点，
+   * 因为主节点本身需要通过 detour 才能建立连接，启动时 detour 链还未就绪会导致 DNS 失败。
+   *
+   * 规则：沿 detour 链找到最末端（没有 detour 的节点），该节点才是真正能直接发出流量的代理。
+   *
+   * 示例：SOCKS5出口.detour = VLESS → 返回 VLESS 的 tag
+   * 示例：VLESS（无 detour）→ 返回 VLESS 的 tag
+   */
+  private resolveEffectiveProxyTag(
+    server: ServerConfig,
+    allServers: ServerConfig[],
+    idToTagMap: Map<string, string>
+  ): string {
+    const visited = new Set<string>();
+    let current = server;
+
+    while (current.detour) {
+      if (visited.has(current.id)) break; // 防止循环
+      visited.add(current.id);
+      const next = allServers.find((s) => s.id === current.detour);
+      if (!next) break;
+      current = next;
+    }
+
+    return idToTagMap.get(current.id) || idToTagMap.get(server.id) || 'proxy';
   }
 
   /**
@@ -3774,6 +3806,10 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       'handshake completed',
       'found process path', // sing-box 进程路径查找，纯调试信息
       'outbound packet connection', // UDP 包路由，频繁且无用
+      // 启动竞态噪音：dns-remote HTTP/2 连接未就绪时的伴生日志
+      'router: process dns packet', // DNS 包处理失败，通常是 closed pipe 的伴生
+      'io: read/write on closed pipe', // HTTP/2 连接未就绪
+      'http2: client connection force closed', // HTTP/2 连接被强制关闭
     ];
 
     for (const pattern of noisePatterns) {
@@ -3963,6 +3999,19 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   private translateErrorMessage(message: string): string {
     console.error(message);
     const lowerMessage = message.toLowerCase();
+
+    // ── 启动竞态噪音过滤 ──────────────────────────────────────────────────────
+    // sing-box 启动瞬间，dns-remote 的 HTTP/2 连接还未就绪，系统后台服务（Apple Push、
+    // iCloud、AdsPower 等）已发来 DNS 查询，导致 "closed pipe" / "force closed" /
+    // "context canceled"。这些错误在 1-3 秒内自动消失，不影响正常使用，过滤掉避免刷屏。
+    if (
+      lowerMessage.includes('io: read/write on closed pipe') ||
+      lowerMessage.includes('http2: client connection force closed') ||
+      lowerMessage.includes('context canceled') ||
+      lowerMessage.includes('client connection force closed via clientconn.close')
+    ) {
+      return '';
+    }
 
     // 常见错误模式匹配
     if (lowerMessage.includes('report handshake success: connection refused')) {
