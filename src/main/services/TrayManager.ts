@@ -487,9 +487,9 @@ export class TrayManager implements ITrayManager {
       this.servers = [];
       this.speedTestResults.clear();
 
-      // macOS: 隐藏 Dock 图标
-      if (process.platform === 'darwin' && app.dock) {
-        app.dock.hide();
+      // macOS: 隐藏 Dock 图标，切换为后台辅助应用模式
+      if (process.platform === 'darwin') {
+        app.setActivationPolicy('accessory');
         this.logManager.addLog('info', 'Dock icon hidden for lightweight mode', 'TrayManager');
       }
 

@@ -138,6 +138,7 @@ async function showWindow() {
   exitLightweightMode();
 
   if (process.platform === 'darwin' && app.dock) {
+    app.setActivationPolicy('regular');
     await app.dock.show();
   }
   if (mainWindow) {
@@ -178,9 +179,9 @@ function enterLightweightCleanup(): void {
   // 内存监控器进入轻量模式
   memoryMonitor.enterLightweightMode();
 
-  // macOS：隐藏 Dock 图标，彻底退出前台应用状态
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.hide();
+  // macOS：切换为后台辅助应用模式，彻底隐藏 Dock 图标
+  if (process.platform === 'darwin') {
+    app.setActivationPolicy('accessory');
     logManager.addLog('info', '轻量模式：Dock 图标已隐藏', 'Main');
   }
 
