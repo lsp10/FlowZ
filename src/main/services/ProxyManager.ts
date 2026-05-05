@@ -2068,6 +2068,15 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
             outbound,
           });
         }
+
+        // c. 基于 domainSuffix 的补充规则（覆盖 geosite 未收录的第三方依赖域名）
+        if (preset.domainSuffix && preset.domainSuffix.length > 0) {
+          rules.push({
+            domain_suffix: preset.domainSuffix,
+            action: 'route',
+            outbound,
+          });
+        }
       }
     }
 
