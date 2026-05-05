@@ -421,6 +421,14 @@ export class ConfigManager implements IConfigManager {
       throw new Error('bypassProcesses must be an array');
     }
 
+    // 数据迁移：清理旧版本中 enabled: false + action: proxy 的应用分流规则
+    // 旧版本 UI 中"代理"选项实际写入的是 enabled: false，语义混乱。
+    // 新版本"跟随全局"直接删除规则，"代理（主节点）"写入 enabled: true。
+    // 迁移策略：enabled: false 的规则直接删除（等同于新版本的"跟随全局"）
+    if (Array.isArray(config.appRules)) {
+      config.appRules = config.appRules.filter((r: any) => r.enabled !== false);
+    }
+
     // 验证端口
     if (typeof config.socksPort !== 'number' || config.socksPort < 1 || config.socksPort > 65535) {
       throw new Error('socksPort must be a number between 1 and 65535');

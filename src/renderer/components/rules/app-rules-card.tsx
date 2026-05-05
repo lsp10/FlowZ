@@ -150,11 +150,19 @@ export function AppRulesCard() {
     let targetServerId: string | undefined = undefined;
     let enabled = true;
 
-    if (value === 'direct') action = 'direct';
-    else if (value === 'block') action = 'block';
-    else if (value === 'proxy-default') {
+    if (value === 'direct') {
+      action = 'direct';
+    } else if (value === 'block') {
+      action = 'block';
+    } else if (value === 'follow-global') {
+      // "跟随全局"：删除该应用的规则，让流量走全局兜底
+      const newRules = appRules.filter((r) => r.appId !== preset.id);
+      await saveConfig({ ...config, appRules: newRules });
+      return;
+    } else if (value === 'proxy') {
+      // "代理（主节点）"：走当前选中的主代理节点
       action = 'proxy';
-      enabled = false;
+      enabled = true;
     } else if (value.startsWith('node-')) {
       action = 'proxy';
       targetServerId = value.replace('node-', '');
@@ -168,7 +176,6 @@ export function AppRulesCard() {
         r.appId === preset.id ? { ...r, action, targetServerId, enabled } : r
       );
     } else {
-      if (value === 'proxy-default') return;
       newRules = [...appRules, { appId: preset.id, action, targetServerId, enabled: true }];
     }
 
@@ -355,10 +362,11 @@ export function AppRulesCard() {
               <div key={preset.id} className="group relative">
                 <Select
                   value={(() => {
-                    if (!rule || !isEnabled) return 'proxy-default';
+                    if (!rule || !isEnabled) return 'follow-global';
                     if (rule.action === 'direct') return 'direct';
                     if (rule.action === 'block') return 'block';
-                    return rule.targetServerId ? `node-${rule.targetServerId}` : 'proxy-default';
+                    if (rule.targetServerId) return `node-${rule.targetServerId}`;
+                    return 'proxy';
                   })()}
                   onValueChange={(v) => handlePolicyChange(preset, v)}
                 >
@@ -447,7 +455,7 @@ export function AppRulesCard() {
                         />
                         <span className="truncate">
                           {(() => {
-                            if (!rule || !isEnabled) return 'Proxy';
+                            if (!rule || !isEnabled) return '自动';
                             if (rule.action === 'direct') return 'DIRECT';
                             if (rule.action === 'block') return 'BLOCK';
                             if (rule.targetServerId) {
@@ -467,8 +475,11 @@ export function AppRulesCard() {
                     <div className="px-2 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                       系统策略
                     </div>
-                    <SelectItem value="proxy-default" className="text-xs font-medium text-primary">
-                      代理
+                    <SelectItem value="follow-global" className="text-xs text-muted-foreground">
+                      自动（跟随全局规则）
+                    </SelectItem>
+                    <SelectItem value="proxy" className="text-xs font-medium text-primary">
+                      代理（主节点）
                     </SelectItem>
                     <SelectItem
                       value="direct"

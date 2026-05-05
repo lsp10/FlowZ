@@ -102,6 +102,8 @@ interface SingBoxDnsServer {
   /** Bootstrap resolver tag: required when server is a domain name (sing-box 1.12+ new format) */
   domain_resolver?: string;
   detour?: string;
+  /** Connection timeout, e.g. "5s" */
+  connect_timeout?: string;
   // Legacy / compat fields (not emitted in new format)
   address?: string;
   address_resolver?: string;
@@ -946,15 +948,26 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         domain_resolver: 'dns-bootstrap-udp',
       },
       {
-        // 远程代理 DNS (推荐 DoH)
+        // 远程代理 DNS：使用 UDP 协议，超时快（5s），不会像 DoH 那样挂起 50s+
+        // 走代理发出，防止 GFW 污染。1.1.1.1 是 Cloudflare DNS，走代理后完全可信。
         tag: 'dns-remote',
-        type: 'https',
-        server: 'dns.google',
-        server_port: 443,
-        path: '/dns-query',
+        type: 'udp',
+        server: '1.1.1.1',
+        server_port: 53,
         domain_resolver: 'dns-bootstrap-udp',
-        // 关键核心：远程解析必须走代理，否则在境内直接发起会因 GFW 拦截/污染导致 FakeIP 映射失败或由于 TTL 极短产生大量无效解析。
         detour: selectedServerTag,
+        connect_timeout: '5s',
+      },
+      {
+        // 远程代理 DNS 备用：当主代理节点不稳定时，用国内 DNS 兜底（可能有污染，但总比超时好）
+        // 仅用于 dns-remote 失败后的兜底，不作为主要 DNS
+        tag: 'dns-remote-fallback',
+        type: 'udp',
+        server: '223.5.5.5',
+        server_port: 53,
+        domain_resolver: 'dns-bootstrap-udp',
+        detour: 'direct',
+        connect_timeout: '3s',
       },
     ];
 
@@ -967,6 +980,14 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       const bootstrapDoh = dnsServers.find((s) => s.tag === 'dns-bootstrap');
       if (bootstrapUdp) bootstrapUdp.detour = 'direct';
       if (bootstrapDoh) bootstrapDoh.detour = 'direct';
+      // 1.13+ 才支持 dns-remote-fallback 的 detour: 'direct'，1.12.x 直接移除该 server
+    } else {
+      // 1.12.x：移除 dns-remote-fallback（不支持 detour: 'direct'）
+      // 同时移除 connect_timeout（1.12.x 不支持该字段）
+      const remoteIdx = dnsServers.findIndex((s) => s.tag === 'dns-remote');
+      if (remoteIdx >= 0) delete dnsServers[remoteIdx].connect_timeout;
+      const fallbackIdx = dnsServers.findIndex((s) => s.tag === 'dns-remote-fallback');
+      if (fallbackIdx >= 0) dnsServers.splice(fallbackIdx, 1);
     }
 
     if (enableFakeIp) {
@@ -984,8 +1005,11 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       rules: [],
       // 默认使用国内 DNS 解析
       final: 'dns-domestic',
-      // macOS 使用 RealIP 模式（嗅探），Windows 依然使用高效的 FakeIP
-      strategy: process.platform === 'darwin' || config.enableIPv6 ? 'prefer_ipv4' : 'ipv4_only',
+      // DNS 解析策略：
+      // - enableIPv6 开启时：prefer_ipv4（优先 IPv4，但允许 IPv6）
+      // - 默认（TUN 模式未配置 IPv6 地址）：ipv4_only，完全不解析 AAAA 记录，
+      //   防止浏览器拿到 IPv6 地址后绕过 TUN 直连，暴露真实 IPv6（如 2408:xxxx 中国大陆段）
+      strategy: config.enableIPv6 ? 'prefer_ipv4' : 'ipv4_only',
       // FakeIP 需要独立缓存，防止 fakeip 和真实 DNS 的缓存互相污染
       ...(enableFakeIp ? { independent_cache: true } : {}),
     };
@@ -1991,6 +2015,20 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       });
     }
 
+    // 2. 阻断公网 IPv6 出站（仅在未启用 IPv6 时）
+    // 问题背景：TUN 地址只有 IPv4（172.19.0.1/30），IPv6 流量无法被 TUN 接管，
+    // 会直接走物理网卡，暴露真实 IPv6 地址（如中国大陆 2408:xxxx 段），
+    // 导致 ChatGPT 等服务检测到真实地理位置并拒绝访问（"Unable to load site"）。
+    // 解决方案：拒绝所有公网 IPv6 出站，强制浏览器回退到 IPv4，IPv4 流量正常走代理。
+    // 注意：私有 IPv6（::1、fc00::/7、fe80::/10、ff00::/8）已在上方 PRIVATE_IP_CIDRS 中处理。
+    if (!config.enableIPv6) {
+      rules.push({
+        ip_cidr: ['::/0'],
+        action: 'route',
+        outbound: 'block',
+      } as any);
+    }
+
     // Bug 4 修复：删除此处重复的 QUIC 阻断规则
     // 第一条 QUIC reject 规则已在上方（生成 routeConfig 之前）添加，此处重复添加会造成规则冗余
     // reject 比 block 更合适（发 TCP RST 让浏览器立即回退到 TCP，而不是静默丢弃造成等待超时）
@@ -2024,6 +2062,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
       // 应用分流规则（真·应用分流，基于进程名）
       // 优先级高于后续的智能分流/全局分流，确保特定应用的流量始终走用户指定的出口
+      // 注意：enabled: false 的规则跳过（表示"跟随全局"，不单独设置路由）
       for (const appRule of config.appRules || []) {
         if (!appRule.enabled) continue;
         const preset = getAppPreset(appRule.appId, config.customAppPresets);
@@ -3841,7 +3880,17 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       'match rule', // 匹配规则
       'final rule', // 最终规则
       'rule-set', // 规则集匹配
-      'outbound/proxy', // 代理出站 - 用户关心的
+      'outbound/proxy', // 代理出站（旧格式）
+      'outbound/socks', // SOCKS 出站 - 用户关心的
+      'outbound/vless', // VLESS 出站
+      'outbound/trojan', // Trojan 出站
+      'outbound/hysteria2', // Hysteria2 出站
+      'outbound/shadowsocks', // Shadowsocks 出站
+      'outbound/vmess', // VMess 出站
+      'outbound/tuic', // TUIC 出站
+      'outbound/anytls', // AnyTLS 出站
+      'outbound/naive', // NaiveProxy 出站
+      'outbound/http', // HTTP 出站
     ];
 
     // 检查是否包含高价值模式

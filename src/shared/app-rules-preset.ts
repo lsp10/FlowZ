@@ -136,33 +136,49 @@ export const APP_PRESETS: AppPreset[] = [
     emoji: '🤖',
     iconUrl: `${QURE_BASE}/ChatGPT.png`,
     geositeTags: ['openai'],
-    // 补充 geosite-openai 未覆盖的第三方依赖域名（来源：OpenAI 官方网络要求文档）
-    // 浏览器访问 ChatGPT 时这些域名必须可达，否则会出现登录失败、功能异常等问题
+    // 将所有核心域名 + 第三方依赖域名全部写入 domainSuffix，
+    // 确保即使 geosite-openai 远程规则集下载失败（jsdelivr 在中国大陆不稳定），
+    // ChatGPT 依然能被正确路由，不依赖远程规则集。
     domainSuffix: [
-      // 登录认证：OpenAI 使用 Auth0 托管登录流程
-      'auth0.com',
-      // A/B 测试 & 功能开关：ChatGPT 用 Statsig 控制功能灰度
+      // ── OpenAI / ChatGPT 核心域名（来自 geosite-openai + 官方文档）──
+      'openai.com', // 主站、API
+      'chatgpt.com', // ChatGPT 主域名
+      'chat.com', // 短域名跳转
+      'oaistatic.com', // 静态资源 CDN
+      'oaiusercontent.com', // 用户上传文件（files.oaiusercontent.com）
+      'sora.com', // Sora 视频生成
+      'crixet.com', // OpenAI 旗下域名
+      // LiveKit 实时音视频（Advanced Voice 模式）
+      'livekit.cloud',
+      // Azure CDN / 存储（OpenAI 使用 Azure 基础设施）
+      'openaiapi-site.azureedge.net',
+      'openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net',
+      'openaicom.imgix.net',
+      'openaicomproductionae4b.blob.core.windows.net',
+      'production-openaicom-storage.azureedge.net',
+      // ── 登录认证 ──
+      'auth0.com', // OpenAI 使用 Auth0 托管登录
+      // ── A/B 测试 & 功能开关 ──
       'statsig.com',
       'statsigapi.net',
       'featuregates.org',
-      // 客服对话组件
+      // ── 客服组件 ──
       'intercom.io',
       'intercomcdn.com',
       'intercomassets.com',
-      // 前端错误监控
+      // ── 监控 & 分析 ──
       'sentry.io',
-      // Datadog 监控
       'datadoghq.com',
-      // 邮件链接追踪
+      // ── 邮件 ──
       'sendgrid.net',
-      // Azure 基础设施（OpenAI 静态资源、文件存储、实时推送）
+      // ── Azure 基础设施 ──
       'azureedge.net',
       'azurefd.net',
       'webpubsub.azure.com',
       'blob.core.windows.net',
-      // 图片 CDN
+      // ── 图片 CDN ──
       'imgix.net',
-      // Cloudflare CDN（openai.com.cdn.cloudflare.net）
+      // ── Cloudflare CDN ──
       'cloudflare.net',
     ],
     processNames: ['ChatGPT', 'ChatGPT.exe'],
@@ -175,15 +191,22 @@ export const APP_PRESETS: AppPreset[] = [
     iconUrl:
       'https://raw.githubusercontent.com/lige47/QuanX-icon-rule/main/icon/04ProxySoft/claude.png',
     geositeTags: ['anthropic'],
-    // 补充 geosite-anthropic 未覆盖的第三方依赖域名
+    // 同样将核心域名写入 domainSuffix，不依赖远程规则集
     domainSuffix: [
-      // A/B 测试 & 功能开关（Claude 也使用 Statsig）
+      // ── Anthropic / Claude 核心域名 ──
+      'anthropic.com',
+      'claude.ai',
+      'claude.com',
+      'clau.de',
+      'claudeusercontent.com',
+      'claudemcpclient.com',
+      // CDN
+      'servd-anthropic-website.b-cdn.net',
+      // ── 第三方依赖 ──
       'statsig.com',
       'statsigapi.net',
       'featuregates.org',
-      // 前端错误监控
       'sentry.io',
-      // 客服组件
       'intercom.io',
       'intercomcdn.com',
     ],
