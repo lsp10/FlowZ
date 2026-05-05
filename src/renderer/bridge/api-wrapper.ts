@@ -219,8 +219,6 @@ export async function getVersionInfo(): Promise<
     appName: string;
     buildDate: string;
     singBoxVersion: string;
-    copyright: string;
-    repositoryUrl: string;
   }>
 > {
   try {

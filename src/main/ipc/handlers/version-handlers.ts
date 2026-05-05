@@ -11,8 +11,6 @@ interface VersionInfo {
   appName: string;
   buildDate: string;
   singBoxVersion: string;
-  copyright: string;
-  repositoryUrl: string;
 }
 
 let proxyManagerRef: { getCoreVersion(): Promise<string> } | null = null;
@@ -44,8 +42,6 @@ export function registerVersionHandlers(proxyManager?: {
         appName: 'FlowZ',
         buildDate: new Date().toISOString().split('T')[0],
         singBoxVersion,
-        copyright: `© ${new Date().getFullYear()} FlowZ. All rights reserved.`,
-        repositoryUrl: 'https://github.com/dododook/FlowZ',
       };
     }
   );

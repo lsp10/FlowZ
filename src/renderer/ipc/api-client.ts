@@ -372,8 +372,6 @@ export interface VersionInfo {
   appName: string;
   buildDate: string;
   singBoxVersion: string;
-  copyright: string;
-  repositoryUrl: string;
 }
 
 /**
