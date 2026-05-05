@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { APP_PRESETS, type AppPreset } from '../../../shared/app-rules-preset';
 import type { AppRule, RuleAction, CustomAppPreset } from '../../../shared/types';
-import { Plus, Trash2, Search, LayoutGrid, List, Image as ImageIcon } from 'lucide-react';
+import { Plus, Trash2, Pencil, Search, LayoutGrid, List, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useEffect } from 'react';
@@ -31,8 +31,10 @@ export function AppRulesCard() {
   const config = useAppStore((state) => state.config);
   const saveConfig = useAppStore((state) => state.saveConfig);
 
-  // -- 新增自定义应用状态 --
+  // -- 新增/编辑自定义应用状态 --
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  // editingPreset !== null 时为编辑模式，null 时为新增模式
+  const [editingPreset, setEditingPreset] = useState<CustomAppPreset | null>(null);
   const [newAppName, setNewAppName] = useState('');
   const [newAppEmoji, setNewAppEmoji] = useState('🌐');
   const [newAppIconUrl, setNewAppIconUrl] = useState('');
@@ -214,14 +216,7 @@ export function AppRulesCard() {
       customAppPresets: [...customPresets, newPreset],
     });
 
-    setIsAddDialogOpen(false);
-    setShowIconGallery(false);
-    setNewAppName('');
-    setNewAppEmoji('🌐');
-    setNewAppIconUrl('');
-    setNewAppGeosite('');
-    setNewAppGeoIP('');
-    setNewAppProcessNames('');
+    closeDialog();
     toast.success('自定义应用添加成功');
   };
 
@@ -234,6 +229,77 @@ export function AppRulesCard() {
       appRules: newRules,
     });
     toast.success('自定义应用已删除');
+  };
+
+  /** 打开编辑弹窗，将现有预设数据填入表单 */
+  const handleOpenEditDialog = (preset: CustomAppPreset) => {
+    setEditingPreset(preset);
+    setNewAppName(preset.name);
+    setNewAppEmoji(preset.emoji || '🌐');
+    setNewAppIconUrl(preset.iconUrl || '');
+    setNewAppGeosite((preset.geositeTags || []).join(', '));
+    setNewAppGeoIP((preset.geoipTags || []).join(', '));
+    setNewAppProcessNames((preset.processNames || []).join(', '));
+    setShowIconGallery(false);
+    setIsAddDialogOpen(true);
+  };
+
+  /** 保存编辑：原地更新 customAppPresets，id / appRules 关联不变 */
+  const handleSaveEdit = async () => {
+    if (!editingPreset) return;
+    if (!newAppName.trim()) {
+      toast.error('请填写应用名称');
+      return;
+    }
+    if (!newAppGeosite.trim() && !newAppGeoIP.trim() && !newAppProcessNames.trim()) {
+      toast.error('Geosite、GeoIP、进程名至少填写一项');
+      return;
+    }
+
+    const updatedPreset: CustomAppPreset = {
+      ...editingPreset,
+      name: newAppName.trim(),
+      emoji: newAppEmoji.trim() || '🌐',
+      iconUrl: newAppIconUrl.trim() || undefined,
+      geositeTags: newAppGeosite
+        ? newAppGeosite
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
+      geoipTags: newAppGeoIP
+        ? newAppGeoIP
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
+      processNames: newAppProcessNames
+        ? newAppProcessNames
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
+    };
+
+    const newPresets = customPresets.map((p) => (p.id === editingPreset.id ? updatedPreset : p));
+
+    await saveConfig({ ...config, customAppPresets: newPresets });
+
+    closeDialog();
+    toast.success('自定义应用已更新');
+  };
+
+  /** 统一关闭弹窗并重置表单 */
+  const closeDialog = () => {
+    setIsAddDialogOpen(false);
+    setEditingPreset(null);
+    setShowIconGallery(false);
+    setNewAppName('');
+    setNewAppEmoji('🌐');
+    setNewAppIconUrl('');
+    setNewAppGeosite('');
+    setNewAppGeoIP('');
+    setNewAppProcessNames('');
   };
 
   return (
@@ -430,15 +496,31 @@ export function AppRulesCard() {
                 </Select>
 
                 {isCustom && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteCustomApp(preset.id);
-                    }}
-                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-sm z-10"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  <>
+                    {/* 编辑按钮（左上角） */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const cp = customPresets.find((p) => p.id === preset.id);
+                        if (cp) handleOpenEditDialog(cp);
+                      }}
+                      className="absolute -top-1 -left-1 h-5 w-5 rounded-full bg-primary text-primary-foreground opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-sm z-10"
+                      title="编辑"
+                    >
+                      <Pencil className="h-2.5 w-2.5" />
+                    </button>
+                    {/* 删除按钮（右上角） */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteCustomApp(preset.id);
+                      }}
+                      className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-sm z-10"
+                      title="删除"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </>
                 )}
               </div>
             );
@@ -467,7 +549,12 @@ export function AppRulesCard() {
         </div>
       </CardContent>
 
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+      <Dialog
+        open={isAddDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+      >
         <DialogContent className="sm:max-w-[425px]">
           {showIconGallery ? (
             <>
@@ -581,8 +668,14 @@ export function AppRulesCard() {
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>新增自定义应用分流</DialogTitle>
-                <DialogDescription>创建规则，像使用内置应用一样方便。</DialogDescription>
+                <DialogTitle>
+                  {editingPreset ? '编辑自定义应用分流' : '新增自定义应用分流'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editingPreset
+                    ? '修改规则匹配条件，路由将自动重启生效。'
+                    : '创建规则，像使用内置应用一样方便。'}
+                </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-4 items-center gap-4">
@@ -662,10 +755,12 @@ export function AppRulesCard() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                <Button variant="outline" onClick={closeDialog}>
                   取消
                 </Button>
-                <Button onClick={handleAddCustomApp}>保存应用</Button>
+                <Button onClick={editingPreset ? handleSaveEdit : handleAddCustomApp}>
+                  {editingPreset ? '保存修改' : '保存应用'}
+                </Button>
               </DialogFooter>
             </>
           )}
