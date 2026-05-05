@@ -392,14 +392,6 @@ export class ConfigManager implements IConfigManager {
     if (typeof config.minimizeToTray !== 'boolean') {
       throw new Error('minimizeToTray must be a boolean');
     }
-    // autoCheckUpdate 是可选字段，兼容旧配置
-    if (config.autoCheckUpdate !== undefined && typeof config.autoCheckUpdate !== 'boolean') {
-      throw new Error('autoCheckUpdate must be a boolean');
-    }
-    // 如果未定义，设置默认值
-    if (config.autoCheckUpdate === undefined) {
-      config.autoCheckUpdate = true;
-    }
 
     // autoLightweightMode 是可选字段，兼容旧配置
     if (
@@ -464,7 +456,6 @@ export class ConfigManager implements IConfigManager {
       silentStart: false,
       autoConnect: false,
       minimizeToTray: true,
-      autoCheckUpdate: true, // 默认启用启动时自动检查更新
       autoLightweightMode: false, // 默认不启用自动轻量模式
       autoUpdateSubscriptionOnStart: false, // 默认不启用启动时更新订阅
       rememberWindowSize: false, // 默认不启用记忆窗口大小

@@ -1,12 +1,4 @@
-import {
-  Tray,
-  Menu,
-  nativeImage,
-  BrowserWindow,
-  app,
-  MenuItemConstructorOptions,
-  shell,
-} from 'electron';
+import { Tray, Menu, nativeImage, BrowserWindow, app, MenuItemConstructorOptions } from 'electron';
 import { LogManager } from './LogManager';
 import { ServerConfig, ProxyMode } from '../../shared/types';
 
@@ -85,7 +77,6 @@ export class TrayManager implements ITrayManager {
   private onSelectServer?: (serverId: string) => void;
   private onChangeProxyMode?: (mode: ProxyMode) => void;
   private onOpenSettings?: () => void;
-  private onCheckUpdate?: () => void;
   private onManageServers?: () => void;
   private onSpeedTest?: () => void;
   private onLightweightMode?: () => void;
@@ -106,7 +97,6 @@ export class TrayManager implements ITrayManager {
       onSelectServer?: (serverId: string) => void;
       onChangeProxyMode?: (mode: ProxyMode) => void;
       onOpenSettings?: () => void;
-      onCheckUpdate?: () => void;
       onManageServers?: () => void;
       onSpeedTest?: () => void;
       onLightweightMode?: () => void;
@@ -122,7 +112,6 @@ export class TrayManager implements ITrayManager {
     this.onSelectServer = callbacks?.onSelectServer;
     this.onChangeProxyMode = callbacks?.onChangeProxyMode;
     this.onOpenSettings = callbacks?.onOpenSettings;
-    this.onCheckUpdate = callbacks?.onCheckUpdate;
     this.onManageServers = callbacks?.onManageServers;
     this.onSpeedTest = callbacks?.onSpeedTest;
     this.onLightweightMode = callbacks?.onLightweightMode;
@@ -369,10 +358,6 @@ export class TrayManager implements ITrayManager {
         label: this.t('打开设置', 'Open Settings'),
         click: () => this.handleOpenSettings(),
       },
-      {
-        label: this.t('检查更新', 'Check for Updates'),
-        click: () => this.handleCheckUpdate(),
-      },
       { type: 'separator' },
       {
         label: this.getSpeedTestLabel(),
@@ -577,19 +562,6 @@ export class TrayManager implements ITrayManager {
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.webContents.send('navigate', '/settings');
       }
-    }
-  }
-
-  /**
-   * 处理检查更新
-   */
-  private handleCheckUpdate(): void {
-    this.logManager.addLog('info', 'Check update clicked from tray', 'TrayManager');
-    if (this.onCheckUpdate) {
-      this.onCheckUpdate();
-    } else {
-      // 默认行为：打开 GitHub releases 页面
-      shell.openExternal('https://github.com/dododook/FlowZ/releases');
     }
   }
 

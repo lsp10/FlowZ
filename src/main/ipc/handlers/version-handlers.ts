@@ -1,15 +1,10 @@
 /**
  * 版本信息 IPC 处理器
- * 处理版本信息相关的 IPC 请求
  */
 
 import { IpcMainInvokeEvent, app, shell } from 'electron';
 import { IPC_CHANNELS } from '../../../shared/ipc-channels';
 import { registerIpcHandler } from '../ipc-handler';
-
-// 从 package.json 读取 sing-box 版本
-const packageJson = require('../../../../../package.json');
-const SINGBOX_VERSION = packageJson.singboxVersion || 'Unknown';
 
 interface VersionInfo {
   appVersion: string;
@@ -20,24 +15,27 @@ interface VersionInfo {
   repositoryUrl: string;
 }
 
-import { CoreUpdateService } from '../../services/CoreUpdateService';
+let proxyManagerRef: { getCoreVersion(): Promise<string> } | null = null;
 
-/**
- * 注册版本信息相关的 IPC 处理器
- */
-export function registerVersionHandlers(coreUpdateService?: CoreUpdateService): void {
+export function registerVersionHandlers(proxyManager?: {
+  getCoreVersion(): Promise<string>;
+}): void {
+  if (proxyManager) {
+    proxyManagerRef = proxyManager;
+  }
+
   registerIpcHandler<void, VersionInfo>(
     IPC_CHANNELS.VERSION_GET_INFO,
     async (_event: IpcMainInvokeEvent) => {
-      let currentSingBoxVersion = SINGBOX_VERSION;
-      if (coreUpdateService) {
+      let singBoxVersion = 'Unknown';
+      if (proxyManagerRef) {
         try {
-          const version = await coreUpdateService.getCurrentVersion();
+          const version = await proxyManagerRef.getCoreVersion();
           if (version && version !== '未知') {
-            currentSingBoxVersion = version;
+            singBoxVersion = version;
           }
-        } catch (error) {
-          console.error('Failed to get core version:', error);
+        } catch {
+          // ignore
         }
       }
 
@@ -45,14 +43,13 @@ export function registerVersionHandlers(coreUpdateService?: CoreUpdateService): 
         appVersion: app.getVersion(),
         appName: 'FlowZ',
         buildDate: new Date().toISOString().split('T')[0],
-        singBoxVersion: currentSingBoxVersion,
+        singBoxVersion,
         copyright: `© ${new Date().getFullYear()} FlowZ. All rights reserved.`,
         repositoryUrl: 'https://github.com/dododook/FlowZ',
       };
     }
   );
 
-  // 打开外部链接
   registerIpcHandler<string, boolean>(
     IPC_CHANNELS.SHELL_OPEN_EXTERNAL,
     async (_event: IpcMainInvokeEvent, url: string) => {
@@ -60,6 +57,4 @@ export function registerVersionHandlers(coreUpdateService?: CoreUpdateService): 
       return true;
     }
   );
-
-  console.log('[Version Handlers] Registered all version IPC handlers');
 }

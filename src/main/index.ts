@@ -15,20 +15,14 @@ import {
   registerProxyHandlers,
   registerVersionHandlers,
   registerAdminHandlers,
-  registerUpdateHandlers,
   registerRulesHandlers,
   registerAutoStartHandlers,
   registerSpeedTestHandlers,
   registerSubscriptionHandlers,
-  setUpdateService,
   setTrayStateCallback,
-  registerCoreUpdateHandlers,
-  setCoreUpdateService,
   registerBackupHandlers,
 } from './ipc/handlers';
 import { createAutoStartManager } from './services/AutoStartManager';
-import { UpdateService } from './services/UpdateService';
-import { CoreUpdateService } from './services/CoreUpdateService';
 import { SpeedTestService } from './services/SpeedTestService';
 import { ipcEventEmitter } from './ipc/ipc-events';
 import { mainEventEmitter, MAIN_EVENTS } from './ipc/main-events';
@@ -89,8 +83,6 @@ let protocolParser: ProtocolParser;
 let logManager: LogManager;
 let proxyManager: ProxyManager | null = null;
 let systemProxyManager: ReturnType<typeof createSystemProxyManager>;
-let updateService: UpdateService;
-let coreUpdateService: CoreUpdateService;
 let subscriptionService: SubscriptionService;
 let speedTestService: SpeedTestService;
 
@@ -173,9 +165,6 @@ function enterLightweightCleanup(): void {
   // 清理 ConfigManager 缓存
   configManager.clearCache();
 
-  // 清理 UpdateService 窗口引用
-  updateService.setMainWindow(null);
-
   // 日志管理器进入轻量模式（缩小缓冲区 + 提升日志级别）
   logManager.enterLightweightMode();
 
@@ -202,18 +191,13 @@ function reregisterIpcHandlers(): void {
   registerServerHandlers(protocolParser, configManager);
   registerLogHandlers(logManager, proxyManager!);
   registerProxyHandlers(proxyManager!, systemProxyManager);
-  registerVersionHandlers(coreUpdateService);
+  registerVersionHandlers(proxyManager!);
   registerAdminHandlers();
   registerRulesHandlers(configManager);
-  registerCoreUpdateHandlers();
   registerAutoStartHandlers();
   registerSubscriptionHandlers(subscriptionService, configManager);
   registerBackupHandlers(configManager);
   registerSpeedTestHandlers(configManager, speedTestService);
-  registerUpdateHandlers();
-
-  // 重新设置 UpdateService 窗口引用
-  updateService.setMainWindow(mainWindow);
 
   // 重新注册语言同步
   const { ipcMain } = require('electron');
@@ -593,8 +577,6 @@ app.whenReady().then(async () => {
   protocolParser = new ProtocolParser();
   logManager = new LogManager();
   systemProxyManager = createSystemProxyManager();
-  updateService = new UpdateService(logManager);
-  coreUpdateService = new CoreUpdateService(logManager);
   subscriptionService = new SubscriptionService(protocolParser, logManager);
   speedTestService = new SpeedTestService(logManager);
   // 记录应用启动日志
@@ -645,7 +627,6 @@ app.whenReady().then(async () => {
 
   // 初始化 ProxyManager（需要在窗口创建后）
   proxyManager = new ProxyManager(logManager, mainWindow || undefined);
-  coreUpdateService.setProxyManager(proxyManager);
 
   // 监听代理管理器事件，更新托盘状态
   proxyManager.on('error', async (error: Error) => {
@@ -672,15 +653,6 @@ app.whenReady().then(async () => {
     }
   });
 
-  proxyManager.on('started', async () => {
-    try {
-      await coreUpdateService.recordSuccessfulVersion();
-      logManager.addLog('info', '已记录当前运行的内核版本基线', 'Main');
-    } catch (e) {
-      logManager.addLog('warn', `记录内核基线版本失败: ${e}`, 'Main');
-    }
-  });
-
   proxyManager.on('stopped', async () => {
     // 正常停止时，重置错误状态
     updateTrayMenuState(false, false);
@@ -704,14 +676,10 @@ app.whenReady().then(async () => {
   registerServerHandlers(protocolParser, configManager);
   registerLogHandlers(logManager, proxyManager);
   registerProxyHandlers(proxyManager, systemProxyManager);
-  registerVersionHandlers(coreUpdateService);
+  registerVersionHandlers(proxyManager);
   registerAdminHandlers();
 
   registerRulesHandlers(configManager);
-
-  // 注册核心更新处理器
-  setCoreUpdateService(coreUpdateService, logManager);
-  registerCoreUpdateHandlers();
 
   // 注册自启动处理器
   registerAutoStartHandlers();
@@ -726,13 +694,6 @@ app.whenReady().then(async () => {
   const autoStartManager = createAutoStartManager();
   const config = await configManager.loadConfig();
   await autoStartManager.setAutoStart(config.autoStart ?? false);
-
-  // 注册更新处理器
-  setUpdateService(updateService);
-  updateService.setMainWindow(mainWindow);
-  // 设置更新前的清理回调，确保在安装更新前停止代理进程
-  updateService.setCleanupCallback(cleanupResources);
-  registerUpdateHandlers();
 
   // 注册测速处理器
   registerSpeedTestHandlers(configManager, speedTestService);
@@ -851,33 +812,6 @@ app.whenReady().then(async () => {
       // 发送导航事件到渲染进程
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('navigate', '/settings');
-      }
-    },
-    onCheckUpdate: async () => {
-      // 检查更新并显示对话框
-      const result = await updateService.checkForUpdate();
-      if (result.hasUpdate && result.updateInfo) {
-        const action = await updateService.showUpdateDialog(result.updateInfo);
-        if (action === 'update') {
-          // 使用带进度窗口的下载方法
-          const filePath = await updateService.downloadUpdateWithProgress(result.updateInfo);
-          if (filePath) {
-            await updateService.installUpdate(filePath);
-          }
-        } else if (action === 'skip') {
-          updateService.skipVersion(result.updateInfo.version);
-        }
-      } else if (!result.error) {
-        // 没有更新，显示提示
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          const { dialog } = require('electron');
-          dialog.showMessageBox(mainWindow, {
-            type: 'info',
-            title: '检查更新',
-            message: '当前已是最新版本',
-            buttons: ['确定'],
-          });
-        }
       }
     },
     onManageServers: () => {
@@ -1001,26 +935,6 @@ app.whenReady().then(async () => {
     try {
       const config = await configManager.loadConfig();
 
-      // 检查 sing-box 内核版本是否发生变化（检测更新是否破坏配置兼容性）
-      try {
-        const lastKnownVersion = coreUpdateService.getLastKnownGoodVersion();
-        const currentVersion = await coreUpdateService.getCurrentVersion();
-        if (lastKnownVersion && currentVersion !== '未知' && lastKnownVersion !== currentVersion) {
-          logManager.addLog(
-            'warn',
-            `sing-box 内核版本已变更: ${lastKnownVersion} → ${currentVersion}，通知用户`,
-            'Main'
-          );
-          ipcEventEmitter.sendToAll(IPC_CHANNELS.EVENT_CORE_VERSION_CHANGED, {
-            previousVersion: lastKnownVersion,
-            currentVersion,
-            hasBackup: coreUpdateService.hasBackup(),
-          });
-        }
-      } catch (versionCheckError) {
-        logManager.addLog('warn', `版本检测失败: ${versionCheckError}`, 'Main');
-      }
-
       // 检查是否启用了启动时自动连接
       if (config.autoConnect && config.selectedServerId) {
         logManager.addLog('info', '启动时自动连接已启用，正在连接...', 'Main');
@@ -1052,38 +966,6 @@ app.whenReady().then(async () => {
       updateTrayMenuState(false, true);
     }
   }, 2000);
-
-  // 启动后自动检查更新（延迟 5 秒，避免影响启动体验）
-  setTimeout(async () => {
-    try {
-      const config = await configManager.loadConfig();
-      // 检查是否启用了自动检查更新
-      if (config.autoCheckUpdate !== false) {
-        logManager.addLog('info', '正在自动检查更新...', 'Main');
-        const result = await updateService.checkForUpdate();
-        if (result.hasUpdate && result.updateInfo) {
-          logManager.addLog('info', `发现新版本: ${result.updateInfo.version}`, 'Main');
-          // 显示更新对话框
-          const action = await updateService.showUpdateDialog(result.updateInfo);
-          if (action === 'update') {
-            // 使用带进度窗口的下载方法
-            const filePath = await updateService.downloadUpdateWithProgress(result.updateInfo);
-            if (filePath) {
-              await updateService.installUpdate(filePath);
-            }
-          } else if (action === 'skip') {
-            updateService.skipVersion(result.updateInfo.version);
-          }
-        } else if (result.error) {
-          logManager.addLog('warn', `自动检查更新失败: ${result.error}`, 'Main');
-        } else {
-          logManager.addLog('info', '当前已经是最新版本', 'Main');
-        }
-      }
-    } catch (error) {
-      logManager.addLog('error', `自动检查更新异常: ${error}`, 'Main');
-    }
-  }, 5000);
 
   // 启动后自动更新订阅（延迟 8 秒，避免干扰启动）
   setTimeout(async () => {

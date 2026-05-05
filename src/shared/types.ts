@@ -290,7 +290,6 @@ export interface UserConfig {
   silentStart: boolean;
   autoConnect: boolean;
   minimizeToTray: boolean;
-  autoCheckUpdate: boolean;
   autoLightweightMode: boolean;
   autoUpdateSubscriptionOnStart: boolean; // 启动时自动更新订阅
   rememberWindowSize?: boolean; // 记忆调整后的窗口大小

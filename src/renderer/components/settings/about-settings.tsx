@@ -1,22 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { ExternalLink, Loader2, Download, FolderUp } from 'lucide-react';
-import {
-  getVersionInfo,
-  checkForUpdates,
-  downloadUpdate,
-  installUpdate,
-  openExternal,
-  checkCoreUpdate,
-  updateCore,
-} from '@/bridge/api-wrapper';
-import { api } from '@/ipc/api-client';
-import type { UpdateProgress } from '@/ipc/api-client';
+import { ExternalLink, Loader2 } from 'lucide-react';
+import { openExternal } from '@/bridge/api-wrapper';
 import { useTranslation } from 'react-i18next';
-import { CoreVersionBanner } from './core-version-banner';
 
 interface VersionInfo {
   appVersion: string;
@@ -30,27 +19,16 @@ interface VersionInfo {
 export function AboutSettings() {
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [checkingCoreUpdate, setCheckingCoreUpdate] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [updatingCore, setUpdatingCore] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const progressUnsubscribeRef = useRef<(() => void) | null>(null);
   const { t } = useTranslation();
 
   useEffect(() => {
     loadVersionInfo();
-    // 清理进度监听器
-    return () => {
-      if (progressUnsubscribeRef.current) {
-        progressUnsubscribeRef.current();
-      }
-    };
   }, []);
 
   const loadVersionInfo = async () => {
     try {
       setLoading(true);
+      const { getVersionInfo } = await import('@/bridge/api-wrapper');
       const response = await getVersionInfo();
       if (response && response.success && response.data) {
         setVersionInfo(response.data);
@@ -60,205 +38,6 @@ export function AboutSettings() {
       toast.error(t('settings.about.loadVersionFail'));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDownloadAndInstall = async (updateInfo: any) => {
-    // 开始监听下载进度
-    setDownloading(true);
-    setDownloadProgress(0);
-
-    // 订阅进度更新
-    progressUnsubscribeRef.current = api.update.onProgress((progress: UpdateProgress) => {
-      if (progress.status === 'downloading') {
-        setDownloadProgress(progress.percentage);
-      } else if (progress.status === 'downloaded') {
-        setDownloadProgress(100);
-      } else if (progress.status === 'error') {
-        setDownloading(false);
-        toast.error(t('settings.about.downloadFail'), {
-          description: progress.error || progress.message,
-          action: {
-            label: t('settings.about.manualDownload'),
-            onClick: () => openExternal(updateInfo.downloadUrl),
-          },
-        });
-      }
-    });
-
-    try {
-      const downloadResult = await downloadUpdate(updateInfo);
-
-      // 取消订阅
-      if (progressUnsubscribeRef.current) {
-        progressUnsubscribeRef.current();
-        progressUnsubscribeRef.current = null;
-      }
-
-      if (downloadResult.success && downloadResult.data) {
-        toast.info(t('settings.about.downloadComplete'));
-        setDownloading(false);
-        await installUpdate(downloadResult.data);
-      } else {
-        setDownloading(false);
-        toast.error(t('settings.about.downloadFail'), {
-          description: downloadResult.error,
-          action: {
-            label: t('settings.about.manualDownload'),
-            onClick: () => openExternal(updateInfo.downloadUrl),
-          },
-        });
-      }
-    } catch (error) {
-      // 取消订阅
-      if (progressUnsubscribeRef.current) {
-        progressUnsubscribeRef.current();
-        progressUnsubscribeRef.current = null;
-      }
-      setDownloading(false);
-      toast.error(t('settings.about.downloadFail'), {
-        description: error instanceof Error ? error.message : t('settings.about.unknownError'),
-      });
-    }
-  };
-
-  const handleCheckUpdate = async () => {
-    try {
-      setCheckingUpdate(true);
-      toast.info(t('settings.about.checkingUpdate'));
-
-      const response = await checkForUpdates();
-
-      if (!response || !response.success) {
-        toast.error(t('settings.about.checkUpdateFail'), {
-          description: response?.error || t('settings.about.cannotConnectServer'),
-        });
-        return;
-      }
-
-      const data = response.data;
-      if (!data) {
-        toast.error(t('settings.about.checkUpdateFail'), {
-          description: t('settings.about.invalidData'),
-        });
-        return;
-      }
-
-      if (data.hasUpdate && data.updateInfo) {
-        const updateInfo = data.updateInfo;
-        toast.success(t('settings.about.foundUpdate', { version: updateInfo.version }), {
-          description: t('settings.about.clickToInstall'),
-          action: {
-            label: t('settings.about.updateNow'),
-            onClick: () => handleDownloadAndInstall(updateInfo),
-          },
-          duration: 15000,
-        });
-      } else {
-        toast.success(t('settings.about.alreadyLatest'));
-      }
-    } catch (error) {
-      console.error('Failed to check for updates:', error);
-      toast.error(t('settings.about.checkUpdateFail'), {
-        description: error instanceof Error ? error.message : t('settings.about.networkError'),
-      });
-    } finally {
-      setCheckingUpdate(false);
-    }
-  };
-
-  const handleCheckCoreUpdate = async () => {
-    try {
-      setCheckingCoreUpdate(true);
-      toast.info(t('settings.about.checkingCoreUpdate'));
-
-      const response = await checkCoreUpdate();
-
-      if (!response || !response.success) {
-        toast.error(t('settings.about.checkCoreUpdateFail'), {
-          description: response?.error || t('settings.about.cannotConnectServer'),
-        });
-        return;
-      }
-
-      const data = response.data;
-
-      if (!data) return;
-
-      if (data.hasUpdate && data.latestVersion && data.downloadUrl) {
-        toast.success(t('settings.about.foundCoreUpdate', { version: data.latestVersion }), {
-          description: t('settings.about.clickToUpdate'),
-          action: {
-            label: t('settings.about.clickToUpdate'),
-            onClick: () => handleUpdateCore(data.downloadUrl!, data.latestVersion!),
-          },
-          duration: 15000,
-        });
-      } else if (data.error) {
-        toast.error(t('settings.about.checkCoreUpdateFail'), { description: data.error });
-      } else {
-        toast.success(t('settings.about.coreAlreadyLatest'), {
-          description: t('settings.about.currentVersion', { version: data.currentVersion }),
-        });
-      }
-    } catch (error) {
-      console.error('Failed to check for core updates:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      toast.error(t('settings.about.checkCoreUpdateFail'), {
-        description: errorMessage || t('settings.about.unknownError'),
-      });
-    } finally {
-      setCheckingCoreUpdate(false);
-    }
-  };
-
-  const handleUpdateCore = async (downloadUrl: string, version: string) => {
-    try {
-      setUpdatingCore(true);
-      toast.info(t('settings.about.updatingCore', { version }), {
-        description: t('settings.about.doNotClose'),
-      });
-
-      const response = await updateCore(downloadUrl);
-
-      if (response && response.success && response.data) {
-        toast.success(t('settings.about.coreUpdateSuccess'), {
-          description: t('settings.about.newCoreActive'),
-        });
-        // 重新加载版本信息
-        loadVersionInfo();
-      } else {
-        toast.error(t('settings.about.coreUpdateFail'), {
-          description: response?.error || t('settings.about.unknownError'),
-        });
-      }
-    } catch (error) {
-      toast.error(t('settings.about.coreUpdateFail'), {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setUpdatingCore(false);
-    }
-  };
-
-  const handleReplaceManualCore = async () => {
-    try {
-      setUpdatingCore(true);
-      const result = await api.coreUpdate.replaceManual();
-      // 如果 result 为 true，说明用户选择了文件并且替换在主进程执行完成
-      if (result) {
-        toast.success(t('settings.about.coreManualReplaceSuccess', '手动替换核心成功'), {
-          description: t('settings.about.newCoreActive', '新核心已生效'),
-        });
-        // 重新加载版本信息
-        loadVersionInfo();
-      }
-    } catch (error) {
-      toast.error(t('settings.about.coreUpdateFail', '核心更新失败'), {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setUpdatingCore(false);
     }
   };
 
@@ -279,7 +58,6 @@ export function AboutSettings() {
 
   return (
     <div className="space-y-4">
-      <CoreVersionBanner />
       <Card>
         <CardContent className="space-y-6 pt-6">
           <div className="space-y-4">
@@ -298,68 +76,7 @@ export function AboutSettings() {
               <h4 className="text-sm font-medium text-muted-foreground">
                 sing-box {t('settings.about.version')}
               </h4>
-              <div className="flex items-center gap-4">
-                <p className="text-lg font-semibold">{versionInfo?.singBoxVersion || 'Unknown'}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCheckCoreUpdate}
-                  disabled={checkingCoreUpdate || updatingCore}
-                >
-                  {(checkingCoreUpdate || updatingCore) && (
-                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                  )}
-                  {updatingCore
-                    ? t('settings.about.updating')
-                    : checkingCoreUpdate
-                      ? t('settings.about.checking')
-                      : t('settings.about.checkUpdate')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleReplaceManualCore}
-                  disabled={checkingCoreUpdate || updatingCore}
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  title={t('settings.about.manualReplace', '手动替换核心')}
-                >
-                  {updatingCore ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <FolderUp className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            <Separator />
-
-            <div className="space-y-2">
-              {downloading ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Download className="h-4 w-4 animate-bounce text-primary" />
-                    <span className="text-sm font-medium">
-                      {t('settings.about.downloading')} {downloadProgress}%
-                    </span>
-                  </div>
-                  <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary transition-all duration-300 ease-out"
-                      style={{ width: `${downloadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  onClick={handleCheckUpdate}
-                  disabled={checkingUpdate}
-                  className="w-full sm:w-auto"
-                >
-                  {checkingUpdate && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}
-                </Button>
-              )}
+              <p className="text-lg font-semibold">{versionInfo?.singBoxVersion || 'Unknown'}</p>
             </div>
 
             <Separator />

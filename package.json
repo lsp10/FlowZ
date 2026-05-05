@@ -1,7 +1,6 @@
 {
   "name": "flowz",
   "version": "3.4.5",
-  "singboxVersion": "1.13.6",
   "description": "FlowZ - 简洁现代的跨平台代理客户端",
   "main": "dist/main/main/index.js",
   "scripts": {
@@ -28,7 +27,6 @@
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,json,css}\"",
     "release:tag": "node scripts/push-release.js",
-    "release:tag:update": "node scripts/push-release.js -y -u",
     "release:prepare": "npm run build && npm run package:all"
   },
   "keywords": [

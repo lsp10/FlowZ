@@ -20,7 +20,6 @@ export function GeneralSettings() {
       | 'silentStart'
       | 'autoConnect'
       | 'minimizeToTray'
-      | 'autoCheckUpdate'
       | 'autoLightweightMode'
       | 'rememberWindowSize'
       | 'enableIPv6'
@@ -119,20 +118,6 @@ export function GeneralSettings() {
             className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
           >
             {t('settings.general.minimizeToTrayTitle')}
-          </Label>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <Checkbox
-            id="autoCheckUpdate"
-            checked={config.autoCheckUpdate !== false}
-            onCheckedChange={(checked) => handleToggle('autoCheckUpdate', checked as boolean)}
-          />
-          <Label
-            htmlFor="autoCheckUpdate"
-            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-          >
-            {t('settings.general.autoCheckUpdate')}
           </Label>
         </div>
 
