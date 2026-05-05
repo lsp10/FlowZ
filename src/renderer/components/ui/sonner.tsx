@@ -19,6 +19,7 @@ const Toaster = ({ richColors, ...props }: ToasterProps) => {
       theme={resolvedTheme as 'light' | 'dark'}
       className="toaster group"
       richColors={richColors}
+      duration={5000}
       toastOptions={{
         classNames: {
           toast:

@@ -116,6 +116,7 @@ export interface SubscriptionConfig {
   name: string;
   url: string;
   autoUpdate: boolean;
+  updateIntervalMinutes?: number; // 自动更新间隔（分钟），默认 300
   lastUpdated?: string;
   createdAt: string;
   // 订阅流量/到期信息（从 Subscription-UserInfo header 解析）
@@ -296,6 +297,7 @@ export interface UserConfig {
   enableIPv6?: boolean; // 启用系统全局 IPv6 解析及路由 (不建议开启)
   autoPrivacyMode?: boolean; // 自动进入隐私模式
   privacyPassword?: string; // 隐私模式解锁密码
+  periodicSpeedTestIntervalMinutes?: number; // 定时测速间隔（分钟），默认 5
 
   // 窗口尺寸（仅在 rememberWindowSize 启用时使用）
   windowBounds?: { width: number; height: number };

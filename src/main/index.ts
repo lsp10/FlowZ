@@ -50,6 +50,7 @@ let mainWindow: BrowserWindow | null = null;
 let trayManager: TrayManager | null = null;
 const isDevelopment = process.env.NODE_ENV === 'development';
 let inactivityTimer: NodeJS.Timeout | null = null;
+let isEnteringLightweightMode = false;
 
 // Privacy Mode State (Main Process)
 let isPrivacyMode = false;
@@ -409,9 +410,6 @@ async function createWindow() {
           );
           if (trayManager) {
             trayManager.enterLightweightMode();
-            if (process.platform === 'darwin' && app.dock) {
-              app.dock.hide();
-            }
             enterLightweightCleanup();
           }
           inactivityTimer = null;
@@ -458,6 +456,9 @@ async function createWindow() {
   mainWindow.on('close', (event) => {
     const window = mainWindow;
     if (!window || window.isDestroyed()) return;
+
+    // 轻量模式主动销毁窗口时，不阻止关闭
+    if (isEnteringLightweightMode) return;
 
     // 默认先阻止关闭
     event.preventDefault();
@@ -539,6 +540,10 @@ async function cleanupResources(): Promise<void> {
  */
 export function getTrayManager(): TrayManager | null {
   return trayManager;
+}
+
+export function setEnteringLightweightMode(value: boolean): void {
+  isEnteringLightweightMode = value;
 }
 
 /**
@@ -797,11 +802,6 @@ app.whenReady().then(async () => {
 
         // 通知渲染进程配置已更新
         ipcEventEmitter.sendToAll('event:configChanged', { newValue: config });
-
-        // 如果代理正在运行，提示用户需要手动重启
-        if (proxyManager && proxyManager.getStatus().running) {
-          ipcEventEmitter.sendToAll('event:needsManualRestart', {});
-        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logManager.addLog('error', `Failed to change proxy mode: ${errorMessage}`, 'Main');
@@ -1046,56 +1046,131 @@ app.whenReady().then(async () => {
     }
   }, 8000);
 
-  // 监听配置变更事件，更新托盘菜单并按需重启代理（1 秒防抖）
+  // 定时更新订阅（每分钟检查一次是否有订阅到达更新间隔）
+  setInterval(async () => {
+    try {
+      const config = await configManager.loadConfig();
+      if (!config.subscriptions || config.subscriptions.length === 0) return;
+
+      const now = Date.now();
+      let configChanged = false;
+
+      for (const subscription of config.subscriptions) {
+        if (!subscription.autoUpdate) continue;
+
+        const intervalMs = (subscription.updateIntervalMinutes ?? 300) * 60 * 1000;
+        const lastUpdated = subscription.lastUpdated
+          ? new Date(subscription.lastUpdated).getTime()
+          : 0;
+
+        if (now - lastUpdated < intervalMs) continue;
+
+        try {
+          const result = await subscriptionService.fetchSubscription(
+            subscription.url,
+            subscription.id
+          );
+          const fetchedServers = result.servers;
+
+          const oldServers = config.servers.filter((s) => s.subscriptionId === subscription.id);
+          const oldServersMap = new Map<string, (typeof config.servers)[0]>();
+          oldServers.forEach((s) => {
+            oldServersMap.set(`${s.name}-${s.protocol}-${s.address}-${s.port}`, s);
+          });
+
+          const newServersToKeep = [];
+          for (const newServer of fetchedServers) {
+            const key = `${newServer.name}-${newServer.protocol}-${newServer.address}-${newServer.port}`;
+            if (oldServersMap.has(key)) {
+              const old = oldServersMap.get(key)!;
+              newServersToKeep.push({
+                ...newServer,
+                id: old.id,
+                createdAt: old.createdAt,
+                updatedAt: new Date().toISOString(),
+              });
+              oldServersMap.delete(key);
+            } else {
+              newServersToKeep.push(newServer);
+            }
+          }
+
+          const deletedIds = new Set(Array.from(oldServersMap.values()).map((s) => s.id));
+          if (config.selectedServerId && deletedIds.has(config.selectedServerId)) {
+            config.selectedServerId = null;
+          }
+
+          const otherServers = config.servers.filter((s) => s.subscriptionId !== subscription.id);
+          config.servers = [...otherServers, ...newServersToKeep];
+          subscription.lastUpdated = new Date().toISOString();
+          if (result.userInfo) subscription.userInfo = result.userInfo;
+          configChanged = true;
+
+          logManager.addLog('info', `定时更新订阅 [${subscription.name}] 成功`, 'Main');
+
+          // 非轻量模式下通知渲染进程
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('event:subscriptionAutoUpdated', {
+              name: subscription.name,
+              success: true,
+            });
+          }
+        } catch (e: any) {
+          logManager.addLog(
+            'warn',
+            `定时更新订阅 [${subscription.name}] 失败: ${e.message}`,
+            'Main'
+          );
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('event:subscriptionAutoUpdated', {
+              name: subscription.name,
+              success: false,
+            });
+          }
+        }
+      }
+
+      if (configChanged) {
+        await configManager.saveConfig(config);
+        ipcEventEmitter.sendToAll('event:configChanged', { newValue: config });
+      }
+    } catch (error) {
+      logManager.addLog('error', `定时更新订阅异常: ${error}`, 'Main');
+    }
+  }, 60 * 1000);
+
+  // 监听配置变更事件，更新托盘菜单并按需停止代理（1 秒防抖）
   let restartDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastProxyMode: string | null = null;
-  let lastProxyModeType: string | null = null;
   mainEventEmitter.on(MAIN_EVENTS.CONFIG_CHANGED, () => {
     // 1. 更新托盘菜单（立即执行）
     const isRunning = proxyManager?.getStatus().running ?? false;
     updateTrayMenuState(isRunning);
 
-    // 2. 如果代理正在运行，防抖后判断是否需要重启
-    if (isRunning && proxyManager) {
-      if (restartDebounceTimer) clearTimeout(restartDebounceTimer);
-      restartDebounceTimer = setTimeout(async () => {
-        restartDebounceTimer = null;
-        try {
-          const latestConfig = await configManager.loadConfig();
+    // 2. 防抖后判断配置是否有实质变化
+    if (restartDebounceTimer) clearTimeout(restartDebounceTimer);
+    restartDebounceTimer = setTimeout(async () => {
+      restartDebounceTimer = null;
+      try {
+        const latestConfig = await configManager.loadConfig();
 
-          // 检测代理模式变化，提示用户手动重启
-          const modeChanged =
-            (lastProxyMode !== null && lastProxyMode !== latestConfig.proxyMode) ||
-            (lastProxyModeType !== null && lastProxyModeType !== latestConfig.proxyModeType);
-          lastProxyMode = latestConfig.proxyMode;
-          lastProxyModeType = latestConfig.proxyModeType;
+        if (!proxyManager || !proxyManager.needsRestart(latestConfig)) return;
 
-          if (modeChanged) {
-            ipcEventEmitter.sendToAll('event:needsManualRestart', {});
-            proxyManager!.switchMode(latestConfig);
-            return;
-          }
-
-          if (!proxyManager!.needsRestart(latestConfig)) return;
-
-          logManager.addLog('info', 'Configuration changed, restarting proxy...', 'Main');
-          await proxyManager!.restart(latestConfig);
-          logManager.addLog('info', 'Proxy restarted successfully with new configuration', 'Main');
-          updateTrayMenuState(true);
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logManager.addLog(
-            'error',
-            `Failed to restart proxy after config change: ${errorMessage}`,
-            'Main'
-          );
-          // 只有非取消的错误才更新托盘为停止状态
-          if (!errorMessage.includes('取消')) {
-            updateTrayMenuState(false, true);
-          }
+        if (proxyManager.getStatus().running) {
+          // 代理正在运行：停止代理并等待端口释放
+          logManager.addLog('info', '配置已变更，正在停止代理...', 'Main');
+          await proxyManager.stop();
+          await proxyManager.waitForResourceRelease();
+          logManager.addLog('info', '代理已停止，资源已释放，请手动开启代理', 'Main');
+          updateTrayMenuState(false);
         }
-      }, 1000);
-    }
+        // 无论是否在运行，都提示用户手动开启
+        ipcEventEmitter.sendToAll('event:needsManualRestart', {});
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logManager.addLog('error', `Failed to handle config change: ${errorMessage}`, 'Main');
+      }
+    }, 1000);
   });
 
   app.on('activate', async () => {

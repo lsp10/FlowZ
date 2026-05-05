@@ -33,6 +33,7 @@ export function SubscriptionDialog({
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [autoUpdate, setAutoUpdate] = useState(false);
+  const [updateInterval, setUpdateInterval] = useState(300);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -41,10 +42,12 @@ export function SubscriptionDialog({
         setName(subscription.name);
         setUrl(subscription.url);
         setAutoUpdate(subscription.autoUpdate);
+        setUpdateInterval(subscription.updateIntervalMinutes ?? 300);
       } else {
         setName('');
         setUrl('');
         setAutoUpdate(false);
+        setUpdateInterval(300);
       }
     }
   }, [open, subscription]);
@@ -65,6 +68,7 @@ export function SubscriptionDialog({
         name: name.trim(),
         url: url.trim(),
         autoUpdate,
+        updateIntervalMinutes: updateInterval,
       });
       onOpenChange(false);
     } catch {
@@ -160,6 +164,23 @@ export function SubscriptionDialog({
             </div>
             <Switch id="sub-auto-update" checked={autoUpdate} onCheckedChange={setAutoUpdate} />
           </div>
+
+          {autoUpdate && (
+            <div className="space-y-2">
+              <Label htmlFor="sub-interval">{t('sub.updateInterval')}</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="sub-interval"
+                  type="number"
+                  min={1}
+                  value={updateInterval}
+                  onChange={(e) => setUpdateInterval(Math.max(1, parseInt(e.target.value) || 300))}
+                  className="w-24"
+                />
+                <span className="text-sm text-muted-foreground">{t('sub.updateIntervalUnit')}</span>
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>

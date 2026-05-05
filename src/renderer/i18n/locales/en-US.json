@@ -585,7 +585,11 @@
     "totalTraffic": "Total:",
     "expireTime": "Expires:",
     "autoUpdate": "Auto Update",
-    "autoUpdateDesc": "When enabled, FlowZ will attempt to update subscription nodes on startup",
+    "autoUpdateDesc": "When enabled, FlowZ will periodically update subscription nodes",
+    "updateInterval": "Update Interval",
+    "updateIntervalUnit": "minutes",
+    "subscriptionUpdated": "Subscription [{{name}}] updated automatically",
+    "subscriptionUpdateFailed": "Subscription [{{name}}] auto-update failed",
     "cancel": "Cancel",
     "saveChange": "Save Changes",
     "addAndUpdate": "Add & Update"
@@ -625,6 +629,6 @@
     "noNodesToImport": "No nodes to import"
   },
   "proxy": {
-    "needsManualRestart": "Proxy mode changed. Please restart the proxy manually to apply the new configuration."
+    "needsManualRestart": "Configuration changed. Please start the proxy manually to apply the new settings."
   }
 }

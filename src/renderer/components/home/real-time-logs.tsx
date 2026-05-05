@@ -13,6 +13,7 @@ export function RealTimeLogs() {
   const { t } = useTranslation();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchSnapshot, setSearchSnapshot] = useState<LogEntry[] | null>(null);
   const [isAutoScroll, setIsAutoScroll] = useState(false); // 默认不自动滚动
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -135,12 +136,50 @@ export function RealTimeLogs() {
     }
   };
 
-  const filteredLogs = logs.filter(
-    (log) =>
-      log.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.level.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (log.category === 'route' && 'route'.includes(searchTerm.toLowerCase()))
-  );
+  const handleSearchChange = (value: string) => {
+    const prev = searchTerm;
+    setSearchTerm(value);
+    if (value && !prev) {
+      // 开始搜索时保存当前日志快照
+      setSearchSnapshot(logs);
+    } else if (!value && prev) {
+      // 清除搜索时丢弃快照
+      setSearchSnapshot(null);
+    }
+  };
+
+  // 搜索时使用快照+新日志的合集，确保不丢失数据
+  const searchBase = searchSnapshot
+    ? (() => {
+        const snapshotTimestamps = new Set(searchSnapshot.map((l) => l.timestamp + l.message));
+        const newLogs = logs.filter((l) => !snapshotTimestamps.has(l.timestamp + l.message));
+        return [...searchSnapshot, ...newLogs];
+      })()
+    : logs;
+
+  const filteredLogs = searchTerm
+    ? searchBase.filter(
+        (log) =>
+          log.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          log.level.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (log.category === 'route' && 'route'.includes(searchTerm.toLowerCase()))
+      )
+    : logs;
+
+  const highlightMatch = (text: string) => {
+    if (!searchTerm) return text;
+    const idx = text.toLowerCase().indexOf(searchTerm.toLowerCase());
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <span className="bg-yellow-300/60 dark:bg-yellow-500/40 rounded px-0.5">
+          {text.slice(idx, idx + searchTerm.length)}
+        </span>
+        {text.slice(idx + searchTerm.length)}
+      </>
+    );
+  };
 
   return (
     <Card>
@@ -153,9 +192,14 @@ export function RealTimeLogs() {
               <Input
                 placeholder={t('home.searchLogs')}
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="h-8 w-[160px] pl-8 text-xs"
               />
+              {searchTerm && (
+                <span className="absolute right-2 top-2 text-[10px] text-muted-foreground">
+                  {filteredLogs.length}/{searchBase.length}
+                </span>
+              )}
             </div>
             <Button
               variant="outline"
@@ -202,7 +246,7 @@ export function RealTimeLogs() {
                       >
                         {isRoute ? 'ROUTE' : log.level.toUpperCase()}:
                       </span>
-                      <span className="ml-2">{log.message}</span>
+                      <span className="ml-2">{highlightMatch(log.message)}</span>
                     </span>
                   </div>
                 );

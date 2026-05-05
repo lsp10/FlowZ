@@ -14,14 +14,14 @@
 
 ## ✨ 功能特性
 
-- ✅ 支持 NaïveProxy、VLESS、VMess、Trojan、Hysteria2、Shadowsocks、Anytls、TUIC、Shadows-tls协议等。
+- ✅ 支持 NaïveProxy、VLESS、VMess、Trojan、Hysteria2、Shadowsocks、AnyTLS、TUIC、SOCKS、HTTP 协议
 - ✅ 强大的路由规则系统（支持 geosite / geoip 规则集）
 - ✅ 多种代理模式（全局 / 智能 / 直连）
-- ✅ 应用分流策略组模块
-- ✅ 支持订阅链接
+- ✅ 应用分流策略组模块（支持进程名精准匹配）
+- ✅ 支持订阅链接（含流量统计和自动更新）
 - ✅ TUN 透明代理模式（支持 System / gVisor / Mixed 堆栈）
 - ✅ 系统级代理自动接管
-- ✅ 支持仅本地代理模式
+- ✅ 支持仅本地代理模式（Manual 模式）
 - ✅ 实时流量统计与测速
 - ✅ 支持前置代理，完美实现代理链功能
 - ✅ 亮色 / 暗色主题切换
@@ -32,8 +32,11 @@
 - ✅ 支持排除进程代理模式
 - ✅ TUN 模式优化（重启仅需一次密码授权）
 - ✅ 实时日志路由命中高亮显示
-- ✅ 跨平台支持（Windows / macOS / Linux（测试））
+- ✅ 跨平台支持（Windows / macOS / Linux）
 - ✅ 支持中英文语言切换
+- ✅ FakeIP 支持（用户可控开关）
+- ✅ 自定义 DNS 配置（国内外分离）
+- ✅ 自定义应用分流预设
 ---
 
 
@@ -71,7 +74,7 @@ xattr -cr /Applications/FlowZ.app
 ### 开发模式
 
 ```bash
-git clone https://github.com/zhangjh/FlowZ.git
+git clone https://github.com/lsp10/FlowZ.git
 cd FlowZ
 
 npm install
@@ -751,6 +754,3 @@ MIT License
 
 ---
 
-## ⭐ Star 趋势
-
-[![Star History Chart](https://api.star-history.com/svg?repos=dododook/FlowZ&type=Date)](https://star-history.com/#dododook/FlowZ&Date)

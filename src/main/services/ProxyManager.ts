@@ -310,6 +310,7 @@ export interface IProxyManager {
   on(event: 'started' | 'stopped' | 'error', listener: (...args: any[]) => void): void;
   off(event: 'started' | 'stopped' | 'error', listener: (...args: any[]) => void): void;
   getCoreVersion(): Promise<string>;
+  waitForResourceRelease(): Promise<void>;
 }
 
 export class ProxyManager extends EventEmitter implements IProxyManager {
@@ -497,6 +498,13 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   }
 
   /**
+   * 等待端口等资源完全释放（供外部调用）
+   */
+  async waitForResourceRelease(): Promise<void> {
+    await this.waitForPortRelease(9090, 8000);
+  }
+
+  /**
    * 重启代理
    */
   async restart(config: UserConfig): Promise<void> {
@@ -641,14 +649,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   }
 
   /**
-   * 切换代理模式
-   * 仅更新配置，不自动重启（由用户手动重启）
-   */
-  async switchMode(newConfig: UserConfig): Promise<void> {
-    this.currentConfig = newConfig;
-  }
-
-  /**
    * 判断新配置是否需要重启代理（路由相关字段是否变化）
    */
   needsRestart(newConfig: UserConfig): boolean {
@@ -660,6 +660,8 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
     if (
       old.selectedServerId !== newConfig.selectedServerId ||
+      old.proxyMode !== newConfig.proxyMode ||
+      old.proxyModeType !== newConfig.proxyModeType ||
       old.socksPort !== newConfig.socksPort ||
       old.httpPort !== newConfig.httpPort ||
       old.allowLan !== newConfig.allowLan
@@ -3790,8 +3792,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
   /** 最近处理过的日志消息，用于去重，最多缓存 10 条 */
   private recentLogHistory: string[] = [];
-  private lastGenericTimeoutTime = 0;
-  private suppressedTimeoutCount = 0;
 
   /**
    * 检查是否为重复日志
@@ -3927,28 +3927,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     }
 
     if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
-      // 尝试提取目标地址
-      const match = message.match(/connection.*?to\s+([^\s:]+(?::\d+)?)/i);
-      const target = match ? match[1] : '';
-      // 私有 IP 超时不显示（内网服务走代理必然超时）
-      if (target && /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(target)) {
-        return '';
-      }
-      if (target) {
-        return `连接超时: ${target}`;
-      }
-      // 无目标地址的超时：节流处理，10 秒内只显示一次
-      const now = Date.now();
-      if (now - this.lastGenericTimeoutTime < 10000) {
-        this.suppressedTimeoutCount++;
-        return '';
-      }
-      const suppressed = this.suppressedTimeoutCount;
-      this.lastGenericTimeoutTime = now;
-      this.suppressedTimeoutCount = 0;
-      return suppressed > 0
-        ? `连接超时：服务器响应超时（近期已抑制 ${suppressed} 条相同日志）`
-        : '连接超时：服务器响应超时';
+      return '';
     }
 
     if (lowerMessage.includes('dns') && lowerMessage.includes('fail')) {

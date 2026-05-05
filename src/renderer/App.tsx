@@ -86,7 +86,6 @@ function App() {
 
       toast.info('测速结果', {
         description: message,
-        duration: 10000,
         style: { whiteSpace: 'pre-line' },
       });
     });
@@ -111,10 +110,23 @@ function App() {
   // Listen to manual restart prompt when proxy mode changes
   useEffect(() => {
     const unsubscribe = ipcClient.on('event:needsManualRestart', () => {
-      toast.warning(i18n.t('proxy.needsManualRestart'), {
-        duration: 8000,
-      });
+      toast.warning(i18n.t('proxy.needsManualRestart'));
     });
+    return () => unsubscribe();
+  }, []);
+
+  // Listen to subscription auto-update notifications
+  useEffect(() => {
+    const unsubscribe = ipcClient.on(
+      'event:subscriptionAutoUpdated',
+      (data: { name: string; success: boolean }) => {
+        if (data.success) {
+          toast.success(i18n.t('sub.subscriptionUpdated', { name: data.name }));
+        } else {
+          toast.error(i18n.t('sub.subscriptionUpdateFailed', { name: data.name }));
+        }
+      }
+    );
     return () => unsubscribe();
   }, []);
 

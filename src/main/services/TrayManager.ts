@@ -462,22 +462,36 @@ export class TrayManager implements ITrayManager {
     this.logManager.addLog('info', 'Enter lightweight mode clicked from tray', 'TrayManager');
     if (this.onLightweightMode) {
       this.onLightweightMode();
-    } else if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('lightweight-mode-active');
+    } else {
+      // 设置标志位，防止 close 事件阻止窗口销毁
+      const mainModule = require('../index');
+      if (mainModule.setEnteringLightweightMode) {
+        mainModule.setEnteringLightweightMode(true);
+      }
 
-      // 销毁窗口，释放整个 Chromium 渲染进程（最大内存释放）
-      this.mainWindow.destroy();
-      this.mainWindow = null;
-      this.logManager.addLog('info', 'Main window destroyed for lightweight mode', 'TrayManager');
+      // 销毁所有窗口
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('lightweight-mode-active');
+        this.mainWindow.destroy();
+        this.mainWindow = null;
+        this.logManager.addLog('info', 'Main window destroyed for lightweight mode', 'TrayManager');
+      }
 
-      // macOS: 隐藏 Dock 图标，仅保留托盘
-      if (process.platform === 'darwin' && app.dock) {
-        app.dock.hide();
+      // 确保所有 BrowserWindow 都已销毁
+      const { BrowserWindow: BW } = require('electron');
+      for (const win of BW.getAllWindows()) {
+        if (!win.isDestroyed()) win.destroy();
       }
 
       // 释放 TrayManager 自身缓存
       this.servers = [];
       this.speedTestResults.clear();
+
+      // macOS: 隐藏 Dock 图标
+      if (process.platform === 'darwin' && app.dock) {
+        app.dock.hide();
+        this.logManager.addLog('info', 'Dock icon hidden for lightweight mode', 'TrayManager');
+      }
 
       // 延迟清理主进程内存
       setTimeout(() => {
