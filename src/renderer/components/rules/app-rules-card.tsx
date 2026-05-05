@@ -174,8 +174,12 @@ export function AppRulesCard() {
   };
 
   const handleAddCustomApp = async () => {
-    if (!newAppName.trim() || !newAppGeosite.trim()) {
-      toast.error('请填写应用名称和 Geosite 标签');
+    if (!newAppName.trim()) {
+      toast.error('请填写应用名称');
+      return;
+    }
+    if (!newAppGeosite.trim() && !newAppGeoIP.trim() && !newAppProcessNames.trim()) {
+      toast.error('Geosite、GeoIP、进程名至少填写一项');
       return;
     }
 
@@ -186,9 +190,11 @@ export function AppRulesCard() {
       emoji: newAppEmoji.trim() || '🌐',
       iconUrl: newAppIconUrl.trim() || undefined,
       geositeTags: newAppGeosite
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
+        ? newAppGeosite
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
       geoipTags: newAppGeoIP
         ? newAppGeoIP
             .split(',')
@@ -626,7 +632,7 @@ export function AppRulesCard() {
                     id="geosite"
                     value={newAppGeosite}
                     onChange={(e) => setNewAppGeosite(e.target.value)}
-                    placeholder="如 apple,icloud"
+                    placeholder="可选，如 apple,icloud"
                     className="col-span-3 h-10 rounded-lg bg-muted/20 border-none focus-visible:ring-1"
                   />
                 </div>

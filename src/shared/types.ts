@@ -259,7 +259,7 @@ export interface CustomAppPreset {
   emoji: string;
   /** 图标 URL（Qure Color 等彩色图标集的应用图标） */
   iconUrl?: string;
-  geositeTags: string[];
+  geositeTags?: string[];
   geoipTags?: string[];
   processNames?: string[];
 }

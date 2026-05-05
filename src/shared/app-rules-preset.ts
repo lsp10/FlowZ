@@ -262,7 +262,7 @@ export function getAppPreset(
         labelKey: custom.name, // 自定义应用直接存储名称
         emoji: custom.emoji,
         iconUrl: custom.iconUrl,
-        geositeTags: custom.geositeTags,
+        geositeTags: custom.geositeTags ?? [],
         geoipTags: custom.geoipTags,
         processNames: custom.processNames,
         category: 'tools', // 自定义应用默认归类到工具
