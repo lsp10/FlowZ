@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-FlowZ is a cross-platform proxy client desktop app built on sing-box core. Electron main process + React renderer. Supports NaiveProxy, VLESS, VMess, Trojan, Shadowsocks, Hysteria2, Anytls, TUIC, and Shadows-tls protocols.
+FlowZ is a cross-platform proxy client desktop app built on sing-box core. Electron main process + React renderer. Supports NaiveProxy, VLESS, VMess, Trojan, Shadowsocks, Hysteria2, AnyTLS, TUIC, SOCKS, and HTTP protocols.
 
 ## Commands
 
