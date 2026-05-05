@@ -178,11 +178,10 @@ function enterLightweightCleanup(): void {
   // 内存监控器进入轻量模式
   memoryMonitor.enterLightweightMode();
 
-  // 清理订阅服务缓存
-  if (subscriptionService) {
-    // 暂停订阅更新定时器以减少资源消耗
-    // 注意：这里不直接操作 subscriptionService 的内部定时器，
-    // 而是通过设置标志位在下次检查时跳过更新
+  // macOS：隐藏 Dock 图标，彻底退出前台应用状态
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.hide();
+    logManager.addLog('info', '轻量模式：Dock 图标已隐藏', 'Main');
   }
 
   // 清理事件监听器以减少内存占用
