@@ -187,7 +187,7 @@ function enterLightweightCleanup(): void {
 
   // 清理事件监听器以减少内存占用
   mainEventEmitter.removeAllListeners();
-  ipcEventEmitter.removeAllListeners();
+  ipcEventEmitter.clear();
 
   // 延迟触发 GC 和内存优化
   setTimeout(() => {
