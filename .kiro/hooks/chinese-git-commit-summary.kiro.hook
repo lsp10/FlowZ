@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "name": "中文代码变动 Git Commit",
+  "description": "在代理完成任务后，自动分析代码改动内容，用中文详细总结变动，并提交 git commit",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "请检查当前工作区的 git 变动（使用 git diff 和 git status），使用之前agent总结的内容和总结用中文详细总结所有代码改造变动内容，包括：修改了哪些文件、每个文件的具体改动内容和目的、整体功能变化说明。然后将这些变动暂存（git add）并使用中文提交信息执行 git commit。提交信息格式：第一行为简短标题（不超过50字），空一行后写详细说明。"
+  },
+  "workspaceFolderName": "FlowZ",
+  "shortName": "chinese-git-commit-summary"
+}
